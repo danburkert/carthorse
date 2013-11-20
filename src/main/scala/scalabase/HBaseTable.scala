@@ -1,12 +1,11 @@
 package scalabase
 
-import org.hbase.async.{GetRequest, HBaseClient}
-import com.stumbleupon.async.Deferred
+import org.hbase.async.{KeyValue, GetRequest, HBaseClient}
+import scalabase.async.Deferred
 
 class HBaseTable(name: Array[Byte], client: HBaseClient)
-extends Table[Array[Byte], Array[Byte], Array[Byte], Array[Byte], Array[Byte]] {
-
-  //implicit private def deferredToFuture[T](deferred: Deferred[T]): Future[T]
+extends Table[Array[Byte], Array[Byte], Array[Byte], Array[Byte], Array[Byte]]
+{
 
   def get(rowkey: Array[Byte], family: Array[Byte], qualifier: Array[Byte], versions: Int) {
     val request = new GetRequest(name, rowkey)
@@ -14,11 +13,14 @@ extends Table[Array[Byte], Array[Byte], Array[Byte], Array[Byte], Array[Byte]] {
       .qualifier(qualifier)
       .maxVersions(versions)
 
-    client.get(request)
+    retrieve(request)
   }
 
-  private def retrieve(request: GetRequest) = {
-    client.get(request)
+  def put()
+
+  private def retrieve(request: GetRequest): Deferred[Seq[KeyValue]]= {
+    import scala.collection.JavaConverters.asScalaBufferConverter
+    new Deferred(client.get(request)).map(al => al.asScala)
   }
 
 }
