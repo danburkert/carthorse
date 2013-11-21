@@ -1,8 +1,9 @@
 package scalabase
 
 import org.hbase.async.HBaseClient
+import scalabase.structures.{IntervalSet, Interval}
 
-trait HBaseTableLike[R, F, Q, V] {
+trait HBaseTableLike[+R, +F, +Q, +V, +Repr] extends Table[R, F, Q, V] {
 
   def bytesToRowKey(bytes: Array[Byte]): R
   def rowKeyToBytes(rowKey: R): Array[Byte]
@@ -19,5 +20,6 @@ trait HBaseTableLike[R, F, Q, V] {
   protected val client: HBaseClient
 
 
+  def column(family: F, qualifier: Q)
 
 }
