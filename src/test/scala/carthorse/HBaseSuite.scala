@@ -1,4 +1,4 @@
-package scalabase
+package carthorse
 
 import org.scalatest.FunSuite
 

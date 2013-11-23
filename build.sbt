@@ -1,10 +1,12 @@
-name := "scalabase"
+name := "carthorse"
 
 version := "0.1"
 
 scalaVersion := "2.10.3"
 
 libraryDependencies += "com.google.guava" % "guava" % "15.0"
+
+libraryDependencies += "com.google.code.findbugs" % "jsr305" % "1.3.+"
 
 libraryDependencies += "com.google.protobuf" % "protobuf-java" % "2.5.0"
 
