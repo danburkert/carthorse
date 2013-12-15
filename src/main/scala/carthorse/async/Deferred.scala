@@ -1,4 +1,4 @@
-package scalabase.async
+package carthorse.async
 
 import java.{util => ju}
 
@@ -6,7 +6,7 @@ import scala.util.{Failure, Success, Try}
 import scala.collection.JavaConverters._
 
 import com.stumbleupon.async.Callback
-import com.stumbleupon.{ async => sua }
+import com.stumbleupon.{async => sua}
 import scala.concurrent.duration.Duration
 import java.util.concurrent.TimeoutException
 import org.slf4j.LoggerFactory
@@ -154,10 +154,12 @@ class Deferred[T](private val repr: sua.Deferred[T]) {
   final def withFilter(p: T => Boolean): Deferred[T] = filter(p)
 
   /**
-   * Creates a new deferred by mapping the value of the current deferred, if the given partial function is defined at that value.
+   * Creates a new deferred by mapping the value of the current deferred, if the given partial
+   * function is defined at that value.
    *
-   * If the current deferred contains a value for which the partial function is defined, the new deferred will also hold that value.
-   * Otherwise, the resulting deferred will fail with a `NoSuchElementException`.
+   * If the current deferred contains a value for which the partial function is defined, the new
+   * deferred will also hold that value. Otherwise, the resulting deferred will fail with a
+   * `NoSuchElementException`.
    *
    * If the current deferred fails, then the resulting deferred also fails.
    *
@@ -174,10 +176,10 @@ class Deferred[T](private val repr: sua.Deferred[T]) {
    * Await.result(h, Duration.Zero) // throw a NoSuchElementException
    * }}}
    */
-  def collect[S](pf: PartialFunction[T, S]): Deferred[S] =
-    map {
-      r => pf.applyOrElse(r, (t: T) => throw new NoSuchElementException("Deferred.collect partial function is not defined at: " + t))
-    }
+  def collect[S](pf: PartialFunction[T, S]): Deferred[S] = map {
+    r => pf.applyOrElse(r, (t: T) =>
+      throw new NoSuchElementException("Deferred.collect partial function is not defined at: " + t))
+  }
 
   /**
    * Zips the values of `this` and `that` deferred, and creates a new deferred holding the tuple of
@@ -252,10 +254,10 @@ object Deferred {
     }
   }
 
-  /** Provides an implicit conversion from [[com.stumbleupon.async.Deferred]] to [[scalabase.async.Deferred]]. */
+  /** Provides an implicit conversion from [[com.stumbleupon.async.Deferred]] to [[carthorse.async.Deferred]]. */
   implicit def su2Scala[T](repr: sua.Deferred[T]): Deferred[T] = new Deferred[T](repr)
 
-  /** Provides an implicit conversion from [[scalabase.async.Deferred]] to [[com.stumbleupon.async.Deferred]]. */
+  /** Provides an implicit conversion from [[carthorse.async.Deferred]] to [[com.stumbleupon.async.Deferred]]. */
   implicit def scala2Su[T](deferred: Deferred[T]): sua.Deferred[T] = deferred.repr
 
   def apply[T](t: Try[T]): Deferred[T] = t match {

@@ -1,8 +1,12 @@
+organization := "danburkert"
+
 name := "carthorse"
 
 version := "0.1"
 
 scalaVersion := "2.10.3"
+
+libraryDependencies += "danburkert" %% "continuum" % "0.2-SNAPSHOT"
 
 libraryDependencies += "com.google.guava" % "guava" % "15.0"
 
@@ -20,6 +24,6 @@ libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.0.13"
 
 libraryDependencies += "org.scalacheck" %% "scalacheck" % "1.10.1" % "test"
 
-libraryDependencies += "org.scalatest" % "scalatest_2.10" % "2.0" % "test"
+libraryDependencies += "org.scalatest" %% "scalatest" % "2.0" % "test"
 
 org.scalastyle.sbt.ScalastylePlugin.Settings
