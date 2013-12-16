@@ -41,14 +41,14 @@ class Deferred[T](private val repr: sua.Deferred[T]) {
     repr.addCallback { x: T =>
       try { f(Success(x)); x}
       catch { case e: Exception =>
-        Logger.warn("Exception caught during successful callback of deferred.", e)
+        Logger.warn("Exception caught during successful callback of deferred:", e)
         x
       }
     }
     repr.addErrback { e: Exception =>
       try { f(Failure(e)); e }
       catch { case thrown: Exception =>
-        Logger.warn("Exception caught during failure callback of deferred.", thrown)
+        Logger.warn("Exception caught during failure callback of deferred:", thrown)
         e
       }
     }
@@ -255,10 +255,10 @@ object Deferred {
   }
 
   /** Provides an implicit conversion from [[com.stumbleupon.async.Deferred]] to [[carthorse.async.Deferred]]. */
-  implicit def su2Scala[T](repr: sua.Deferred[T]): Deferred[T] = new Deferred[T](repr)
+  implicit def su2ch[T](repr: sua.Deferred[T]): Deferred[T] = new Deferred[T](repr)
 
   /** Provides an implicit conversion from [[carthorse.async.Deferred]] to [[com.stumbleupon.async.Deferred]]. */
-  implicit def scala2Su[T](deferred: Deferred[T]): sua.Deferred[T] = deferred.repr
+  implicit def ch2Su[T](deferred: Deferred[T]): sua.Deferred[T] = deferred.repr
 
   def apply[T](t: Try[T]): Deferred[T] = t match {
     case Success(value) => sua.Deferred.fromResult(value)

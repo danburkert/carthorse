@@ -11,7 +11,7 @@ class HBase(quorum: Seq[String] = Seq("localhost:2181"), basePath: String = "/hb
   def ensureTableExists(name: String): Deferred[_] = client.ensureTableExists(name)
 
   def openTable(name: String, families: String*): HBaseTable =
-    HBaseTable(name, client, families = families)
+    HBaseTable(client, name, families = families)
 
-  def shutdown(): Deferred[_] = client.shutdown()
+  def close(): Deferred[_] = client.shutdown()
 }

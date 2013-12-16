@@ -1,15 +1,16 @@
-package scalabase.async
-
-import com.stumbleupon.{async => sua}
+package carthorse.async
 
 import java.util.concurrent.TimeoutException
-import org.scalatest.{Matchers, WordSpec}
+
 import scala.RuntimeException
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration._
-import scala.util.{Failure, Success, Try}
+import scala.util.{Try, Success, Failure}
+
 import com.stumbleupon.async.DeferredGroupException
+import com.stumbleupon.{async => sua}
+import org.scalatest.{Matchers, WordSpec}
 
 class DeferredSpec extends WordSpec with Matchers {
 
