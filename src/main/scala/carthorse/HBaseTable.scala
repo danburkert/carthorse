@@ -1,15 +1,22 @@
 package carthorse
 
 import java.{util => ju}
+import java.{lang => jl}
+import java.io.Closeable
 
-import scala.collection.JavaConverters.collectionAsScalaIterableConverter
-
-import org.hbase.async._
-import continuum.{Interval, IntervalSet}
-
-import carthorse.async.Deferred.su2ch
-import carthorse.async.Deferred
+import scala.collection.JavaConverters._
+import scala.annotation.tailrec
 import scala.concurrent.duration.Duration
+
+import com.google.common.collect.Iterables
+import continuum.bound.{Unbounded, Open, Closed}
+import continuum.{Interval, IntervalSet}
+import org.hbase.async.CompareFilter.CompareOp
+import org.hbase.async.FilterList.Operator
+import org.hbase.async._
+
+import carthorse.async.Deferred
+import carthorse.async.Deferred.su2ch
 
 /**
  * A view of an HBase table. Clients can use an instance of this class to perform scans, gets,
@@ -41,53 +48,49 @@ import scala.concurrent.duration.Duration
 case class HBaseTable(
     client: HBaseClient,
     name: String,
-    columns: Map[String, IntervalSet[Qualifier]],
     rows: IntervalSet[RowKey] = IntervalSet(Interval.all[RowKey]),
+    columns: Map[String, IntervalSet[Qualifier]],
     versions: IntervalSet[Long] = IntervalSet(Interval.all[Long]),
-    maxVersions: Int = Int.MaxValue,
-    maxCells: Int = Scanner.DEFAULT_MAX_NUM_KVS,
-    maxRows: Int = Scanner.DEFAULT_MAX_NUM_ROWS,
-    maxBytes: Long = 0xFFFFFFFFF0000000L,  // => max = 256MB
+    maxVersions: Option[Int] = None,
+    maxCells: Option[Int] = None,
+    maxRows: Option[Int] = None,
+    maxBytes: Option[Long] = None,
     populateBlockCache: Boolean = true
 ) {
 
-  def row(row: RowKey): HBaseTable = rows(row)
+  def viewRow(row: RowKey): HBaseTable = viewRows(row)
 
-  def rows(rows: RowKey*): HBaseTable = this.rows(IntervalSet(rows.map(Interval(_)):_*))
+  def viewRows(rows: RowKey*): HBaseTable = viewRows(IntervalSet(rows.map(Interval(_)):_*))
 
-  def rows(rows: Interval[RowKey]): HBaseTable = this.rows(IntervalSet(rows))
+  def viewRows(rows: Interval[RowKey]): HBaseTable = viewRows(IntervalSet(rows))
 
-  def rows(rows: IntervalSet[RowKey]): HBaseTable = copy(rows = this.rows intersect rows)
+  def viewRows(rows: IntervalSet[RowKey]): HBaseTable = copy(rows = this.rows intersect rows)
 
-  def family(family: String) = families(family)
+  def viewFamily(family: String) = viewFamilies(family)
 
-  def families(family: String*) = copy(columns = columns filterKeys family.toSet)
+  def viewFamilies(family: String*) = copy(columns = columns filterKeys family.toSet)
 
-  def column(family: String, qualifier: Qualifier): HBaseTable = columns(family, qualifier)
+  def viewColumn(family: String, qualifier: Qualifier): HBaseTable = viewColumns(family, qualifier)
 
-  def columns(family: String, qualifiers: Qualifier*): HBaseTable =
-    columns(family, IntervalSet(qualifiers.map(Interval(_)):_*))
+  def viewColumns(family: String, qualifiers: Qualifier*): HBaseTable =
+    viewColumns(family, IntervalSet(qualifiers.map(Interval(_)):_*))
 
-  def columns(family: String, qualifiers: Interval[Qualifier]): HBaseTable =
-    columns(family, IntervalSet(qualifiers))
+  def viewColumns(family: String, qualifiers: IntervalSet[Qualifier]): HBaseTable =
+    viewColumns(Map(family -> qualifiers))
 
-  def columns(family: String, qualifiers: IntervalSet[Qualifier]): HBaseTable =
-    copy(columns = Map(family -> (this.columns(family) intersect qualifiers)))
-
-  def columns(columns: Map[String, IntervalSet[Qualifier]]): HBaseTable = {
+  def viewColumns(columns: Map[String, IntervalSet[Qualifier]]): HBaseTable = {
     val mergedColumns = for ((family, qualifiers) <- columns)
-                        yield (family, columns(family) intersect qualifiers)
-    copy(columns = mergedColumns)
+      yield (family, this.columns.get(family).fold(qualifiers)((t: IntervalSet[Qualifier]) => t.intersect(qualifiers)))
+    copy(columns = mergedColumns.filter{ case (family, qualifiers) => qualifiers.nonEmpty })
   }
 
-  def version(version: Long): HBaseTable = versions(version)
+  def viewVersion(version: Long): HBaseTable = viewVersions(version)
 
-  def versions(versions: Long*): HBaseTable = copy(versions =
+  def viewVersions(versions: Long*): HBaseTable = copy(versions =
       this.versions intersect IntervalSet(versions.map(Interval(_)):_*))
 
-  def versions(versions: Interval[Long]): HBaseTable = this.versions(IntervalSet(versions))
-
-  def versions(versions: IntervalSet[Long]): HBaseTable = copy(versions = this.versions intersect versions)
+  def viewVersions(versions: IntervalSet[Long]): HBaseTable =
+    copy(versions = this.versions  intersect versions)
 
   def foreach[U](f: Cell => U): Deferred[Unit] =
     scanner().nextRows().map { kvGroups: ju.ArrayList[ju.ArrayList[KeyValue]] =>
@@ -100,46 +103,168 @@ case class HBaseTable(
   def foreach_![U](f: Cell => U): Unit = foreach(f).result()
   def foreach_![U](f: Cell => U, atMost: Duration): Unit = foreach(f).result()
 
-  def iterator: Deferred[Iterator[Cell]] = {
-    val scan = scanner()
+  def isEmpty: Boolean = rows.isEmpty || columns.forall(_._2.isEmpty) || versions.isEmpty
 
-    ???
+  /**
+   * Filter for filtering all cells not in a row contained in the interval set of rows. Not
+   * necessary if the interval set consists of a single interval, or entirely of specified rows.
+   */
+  private lazy val rowsFilter: Option[ScanFilter] = {
+    if (rows.size <= 1 || rows.toSeq.forall(_.isPoint)) None
+    else {
+      val filters = rows.toSeq.map { interval =>
+        val start: Option[ScanFilter] = interval.lower.bound match {
+          case Closed(l)   => Some(new RowFilter(CompareOp.GREATER_OR_EQUAL, new BinaryComparator(l.bytes)))
+          case Open(l)     => Some(new RowFilter(CompareOp.GREATER, new BinaryComparator(l.bytes)))
+          case Unbounded() => None
+        }
+        val end: Option[ScanFilter] = interval.upper.bound match {
+          case Closed(u)   => Some(new RowFilter(CompareOp.LESS_OR_EQUAL, new BinaryComparator(u.bytes)))
+          case Open(u)     => Some(new RowFilter(CompareOp.LESS, new BinaryComparator(u.bytes)))
+          case Unbounded() => None
+        }
+
+        val bounds = List(start, end).flatten
+        bounds.size match {
+          case 2 => new FilterList(bounds.asJava, Operator.MUST_PASS_ALL)
+          case 1 => bounds.head
+          case _ => throw new AssertionError()
+        }
+      }
+      Some(new FilterList(filters.asJava, Operator.MUST_PASS_ONE))
+    }
   }
 
-  private lazy val qualifiersFilter: ScanFilter = {
-    columns.map { case (family, qualifiers) =>
-      qualifiers
+  /**
+   * Filter for filtering all cells not in the map of column family to qualifier interval set.
+   * Column families which include all qualifiers, or only specified qualifiers (not intervals)
+   * do not need a filter.
+   */
+  private lazy val columnsFilter: Option[ScanFilter] = {
+    /**
+     * Returns a filter which filters any cell not in the specified family and qualifiers.
+     */
+    def familyFilter(family: String, qualifiers: IntervalSet[Qualifier]): Option[ScanFilter] = {
+      if (qualifiers.forall(_.isPoint)) return None
+      if (qualifiers.contains(Interval.atLeast(Identifier.minimum))) return None
 
+      val qualifierFilters: Seq[ScanFilter] = qualifiers.toSeq.map { interval =>
+        val (startKey, startInclusive) = interval.lower.bound match {
+          case Closed(l) => l.bytes -> true
+          case Open(l) => l.bytes -> false
+          case Unbounded() => (null: Array[Byte]) -> true
+        }
+        val (endKey, endInclusive) = interval.upper.bound match {
+          case Closed(u) => u.bytes -> true
+          case Open(u) => u.bytes -> false
+          case Unbounded() => (null: Array[Byte]) -> true
+        }
+        new ColumnRangeFilter(startKey, startInclusive, endKey, endInclusive)
+      }
+
+      val qualifiersFilter =
+        if (qualifierFilters.size == 1) qualifierFilters.head
+        else new FilterList(qualifierFilters.asJava, Operator.MUST_PASS_ONE)
+
+      val familyFilter = new FamilyFilter(CompareOp.EQUAL, new BinaryComparator(family.getBytes(Charset)))
+      Some(new FilterList(List(familyFilter, qualifiersFilter).asJava, Operator.MUST_PASS_ALL))
     }
 
-    ???
-  }
+    val familyFilters: Seq[ScanFilter] = columns.toSeq.flatMap { case (family, qualifiers) =>
+      familyFilter(family, qualifiers)
+    }
 
-  private lazy val rowsFilter: ScanFilter = {
-    ???
+    familyFilters.size match {
+      case 0 => None
+      case 1 => Some(familyFilters.head)
+      case _ => Some(new FilterList(familyFilters.asJava, Operator.MUST_PASS_ONE))
+    }
   }
 
   def scan(
-      maxVersions: Int = maxVersions,
-      maxCells: Int = maxCells,
-      maxRows: Int = maxRows,
-      maxBytes: Long = maxBytes,
+      maxVersions: Option[Int] = maxVersions,
+      maxCells: Option[Int] = maxCells,
+      maxRows: Option[Int] = maxRows,
+      maxBytes: Option[Long] = maxBytes,
       populateBlockCache: Boolean = populateBlockCache
-  ): Deferred[Iterator[Cell]] = {
+  ): Iterator[Cell] = {
     val scanner = client.newScanner(name)
-    var filters: List[ScanFilter] = List()
-    if (columns.nonEmpty) scanner.setFamilies(columns.keys.map(_.getBytes(Charset)).toArray, null)
 
-    val (startKey, stopKey) = rows.span.normalize
+    // set start and stop rowkey
+    val (startKey, stopKey): (Option[RowKey], Option[RowKey]) = rows.span.map(_.normalize).getOrElse(None -> None)
     startKey.foreach(s => scanner.setStartKey(s.bytes))
-    stopKey.foreach(s => scanner.setStopKey(s.bytes))
+    // asynchbase uses the empty byte array as a special stop key to signify 'scan to end of table',
+    // so if this table's stop key is the empty array, we replace it with Array(0x00).
+    stopKey.foreach(s => scanner.setStopKey(if (s.bytes.length == 0) Array[Byte](0) else s.bytes))
 
-    val (minVersion, maxVersion) = versions.span.normalize
+    println("columns: " + columns)
+
+    // set columns
+    val (families, qualifiers): (Seq[Array[Byte]], Seq[Array[Array[Byte]]]) = columns.map {
+      case (family: String, qualifiers: IntervalSet[Qualifier]) => {
+        // If all qualifiers in the family are specified as points we can scan just the
+        // requested qualifiers.  Otherwise, we rely on filters to exclude unwanted qualifiers.
+        val fam: Array[Byte] = family.getBytes(Charset)
+        // asynchbase uses null as an indicator to scan all qualifiers in the column family
+        val quals: Array[Array[Byte]] =
+          if (qualifiers.forall(_.isPoint)) qualifiers.map(_.point.get.bytes).toArray
+          else null
+        fam -> quals
+      }
+    }.toSeq.unzip
+    // sanity checking
+    require(families.size == qualifiers.length)
+    // asynchbase returns all columns when you specify no families
+    if (families.isEmpty) return Iterator()
+    val f = families.toArray
+    val q = qualifiers.toArray
+    scanner.setFamilies(families.toArray, qualifiers.toArray)
+
+    // set versions
+    // short circuit if no versions
+    if (versions.isEmpty) return Iterator()
+    val (minVersion, maxVersion) = versions.span.map(_.normalize).getOrElse(None -> None)
     minVersion.foreach(v => scanner.setMinTimestamp(v))
     maxVersion.foreach(v => scanner.setMaxTimestamp(v))
-    scanner
 
-    ???
+    // apply filters
+    val filters = List(rowsFilter, columnsFilter).flatten
+    filters.size match {
+      case 0 =>
+      case 1 => scanner.setFilter(filters.head)
+      case _ => scanner.setFilter(new FilterList(filters.asJava, Operator.MUST_PASS_ONE))
+    }
+
+    new Iterator[Cell] with Closeable {
+      private var nextBatch: Deferred[ju.ArrayList[ju.ArrayList[KeyValue]]] = scanner.nextRows()
+      private var currentBatch: Iterator[KeyValue] = Iterator()
+      private var finished: Boolean = false
+
+      /**
+       * Load the next batch into `current`, and request a new batch for `next`.
+       */
+      private def requestBatch(): Unit = {
+        val batch = nextBatch.join()
+        if (batch == null) finished = true
+        else {
+          currentBatch = (Iterables.concat(batch): jl.Iterable[KeyValue]).iterator().asScala
+          nextBatch = scanner.nextRows()
+        }
+      }
+
+      @tailrec
+      def hasNext(): Boolean = {
+        if (finished) false
+        else if (currentBatch.hasNext) true
+        else {
+          requestBatch()
+          hasNext()
+        }
+      }
+
+      def close(): Unit = scanner.close().join()
+      def next(): Cell = Cell(currentBatch.next())
+    }
   }
 
   /**
@@ -147,17 +272,10 @@ case class HBaseTable(
    * Scanners will automatically close themselves when they are out of rows, or if they timeout.
    * Scanners may be closed explicitly if not used fully.
    */
-  private def scanner(): Scanner = {
-    val scanner = client.newScanner(name)
-    if (columns.nonEmpty) scanner.setFamilies(columns.keys.map(_.getBytes(Charset)).toArray, null)
-    val (start, stop) = rows.span.normalize
-    start.foreach(s => scanner.setStartKey(s.bytes))
-    stop.foreach(s => scanner.setStopKey(s.bytes))
-    scanner
-  }
+  private def scanner(): Scanner = ???
 }
 
 object HBaseTable {
   def apply(client: HBaseClient, name: String, families: Iterable[String]): HBaseTable =
-    HBaseTable(client, name, families.map(_ -> IntervalSet(Interval.all[Qualifier])).toMap)
+    HBaseTable(client, name, columns = families.map(_ -> IntervalSet(Interval.all[Qualifier])).toMap)
 }
