@@ -50,7 +50,7 @@ case class HBaseTable(
     name: String,
     rows: IntervalSet[RowKey] = IntervalSet(Interval.all[RowKey]),
     columns: Map[String, IntervalSet[Qualifier]],
-    versions: IntervalSet[Long] = IntervalSet(Interval.all[Long]),
+    versions: IntervalSet[Long] = IntervalSet(Interval.atLeast(0)),
     maxVersions: Option[Int] = None,
     maxCells: Option[Int] = None,
     maxRows: Option[Int] = None,
@@ -89,8 +89,8 @@ case class HBaseTable(
   def viewVersions(versions: Long*): HBaseTable = copy(versions =
       this.versions intersect IntervalSet(versions.map(Interval(_)):_*))
 
-  def viewVersions(versions: IntervalSet[Long]): HBaseTable =
-    copy(versions = this.versions  intersect versions)
+  def viewVersions(versions: Interval[Long]): HBaseTable =
+    copy(versions = this.versions intersect versions)
 
   def foreach[U](f: Cell => U): Deferred[Unit] =
     scanner().nextRows().map { kvGroups: ju.ArrayList[ju.ArrayList[KeyValue]] =>
@@ -109,8 +109,8 @@ case class HBaseTable(
    * Filter for filtering all cells not in a row contained in the interval set of rows. Not
    * necessary if the interval set consists of a single interval, or entirely of specified rows.
    */
-  private lazy val rowsFilter: Option[ScanFilter] = {
-    if (rows.size <= 1 || rows.toSeq.forall(_.isPoint)) None
+  private lazy val rowsFilter: Option[ScanFilter] =
+    if (rows.size <= 1) None
     else {
       val filters = rows.toSeq.map { interval =>
         val start: Option[ScanFilter] = interval.lower.bound match {
@@ -133,7 +133,6 @@ case class HBaseTable(
       }
       Some(new FilterList(filters.asJava, Operator.MUST_PASS_ONE))
     }
-  }
 
   /**
    * Filter for filtering all cells not in the map of column family to qualifier interval set.
@@ -181,6 +180,22 @@ case class HBaseTable(
     }
   }
 
+  /**
+   * Filter for filtering all cells not in the list of versions.
+   */
+  private lazy val versionsFilter: Option[TimestampsFilter] =
+    if (versions.size <= 1) None
+    else {
+      require(versions.forall(_.isPoint))
+      val timestamps: Seq[java.lang.Long] = versions.toSeq.map { interval =>
+        interval.lower.bound match {
+          case Closed(l) => l: java.lang.Long
+          case _         => throw new AssertionError()
+        }
+      }
+      Some(new TimestampsFilter(timestamps:_*))
+    }
+
   def scan(
       maxVersions: Option[Int] = maxVersions,
       maxCells: Option[Int] = maxCells,
@@ -191,13 +206,13 @@ case class HBaseTable(
     val scanner = client.newScanner(name)
 
     // set start and stop rowkey
+    // short circuit if no rows
+    if (rows.isEmpty) return Iterator()
     val (startKey, stopKey): (Option[RowKey], Option[RowKey]) = rows.span.map(_.normalize).getOrElse(None -> None)
     startKey.foreach(s => scanner.setStartKey(s.bytes))
     // asynchbase uses the empty byte array as a special stop key to signify 'scan to end of table',
     // so if this table's stop key is the empty array, we replace it with Array(0x00).
     stopKey.foreach(s => scanner.setStopKey(if (s.bytes.length == 0) Array[Byte](0) else s.bytes))
-
-    println("columns: " + columns)
 
     // set columns
     val (families, qualifiers): (Seq[Array[Byte]], Seq[Array[Array[Byte]]]) = columns.map {
@@ -214,7 +229,7 @@ case class HBaseTable(
     }.toSeq.unzip
     // sanity checking
     require(families.size == qualifiers.length)
-    // asynchbase returns all columns when you specify no families
+    // short circuit if no families
     if (families.isEmpty) return Iterator()
     val f = families.toArray
     val q = qualifiers.toArray
@@ -228,7 +243,7 @@ case class HBaseTable(
     maxVersion.foreach(v => scanner.setMaxTimestamp(v))
 
     // apply filters
-    val filters = List(rowsFilter, columnsFilter).flatten
+    val filters = List(rowsFilter, columnsFilter, versionsFilter).flatten
     filters.size match {
       case 0 =>
       case 1 => scanner.setFilter(filters.head)

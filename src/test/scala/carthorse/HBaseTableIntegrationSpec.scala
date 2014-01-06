@@ -57,7 +57,7 @@ class HBaseTableIntegrationSpec
           cell.value.bytes,
           cell.version))
     }
-    client.flush()
+    client.flush().join()
   }
 
   property("HBaseTable can scan all Cells in a table.") {
@@ -74,7 +74,6 @@ class HBaseTableIntegrationSpec
     }
   }
 
-  // Requires filters
   property("HBaseTable can scan all Cells in a table restricted by rowkeys.") {
     forAll { rks: List[RowKey] =>
       val rowkeys = SortedSet(rks:_*)
@@ -136,20 +135,20 @@ class HBaseTableIntegrationSpec
   }
 
   property("HBaseTable can scan all Cells in a table restricted to versions.") {
-    forAll { longs: Set[Long] =>
-      val versions = longs.filter(_ >= 0).toSet
-      val result = table.viewVersions(versions.toSeq:_*).scan().toSet
+    forAll { longs: List[Long] =>
+      val versions = longs.toSet
+      val result = table.viewVersions(longs:_*).scan().toSet
       val expected = cells.filter(cell => versions(cell.version))
       result should equal (expected)
     }
   }
 
-  property("HBaseTable can scan all Cells in a table restricted to a version interval set.") {
-    forAll { longs: IntervalSet[Long] =>
-      val versions = longs.intersect(Interval.atLeast(0L))
+  property("HBaseTable can scan all Cells in a table restricted to a version interval.") {
+    forAll { versions: Interval[Long] =>
       val result = table.viewVersions(versions).scan().toSet
-      val expected = cells.filter(cell => versions(Interval.point(cell.version)))
+      val expected = cells.filter(cell => versions(cell.version))
       result should equal (expected)
     }
   }
+
 }
