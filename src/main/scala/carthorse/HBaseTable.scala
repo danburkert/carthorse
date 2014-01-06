@@ -6,7 +6,6 @@ import java.io.Closeable
 
 import scala.collection.JavaConverters._
 import scala.annotation.tailrec
-import scala.concurrent.duration.Duration
 
 import com.google.common.collect.Iterables
 import continuum.bound.{Unbounded, Open, Closed}
@@ -92,18 +91,7 @@ case class HBaseTable(
   def viewVersions(versions: Interval[Long]): HBaseTable =
     copy(versions = this.versions intersect versions)
 
-  def foreach[U](f: Cell => U): Deferred[Unit] =
-    scanner().nextRows().map { kvGroups: ju.ArrayList[ju.ArrayList[KeyValue]] =>
-      for {
-        kvGroup <- kvGroups.asScala
-        kv <- kvGroup.asScala
-      } f(Cell(kv))
-    }
-
-  def foreach_![U](f: Cell => U): Unit = foreach(f).result()
-  def foreach_![U](f: Cell => U, atMost: Duration): Unit = foreach(f).result()
-
-  def isEmpty: Boolean = rows.isEmpty || columns.forall(_._2.isEmpty) || versions.isEmpty
+  def isEmpty: Boolean = rows.isEmpty || columns.isEmpty || versions.isEmpty
 
   /**
    * Filter for filtering all cells not in a row contained in the interval set of rows. Not
@@ -140,9 +128,7 @@ case class HBaseTable(
    * do not need a filter.
    */
   private lazy val columnsFilter: Option[ScanFilter] = {
-    /**
-     * Returns a filter which filters any cell not in the specified family and qualifiers.
-     */
+    /** Returns a filter which filters any cell not in the specified family and qualifiers. */
     def familyFilter(family: String, qualifiers: IntervalSet[Qualifier]): Option[ScanFilter] = {
       if (qualifiers.forall(_.isPoint)) return None
       if (qualifiers.contains(Interval.atLeast(Identifier.minimum))) return None
@@ -236,9 +222,9 @@ case class HBaseTable(
     scanner.setFamilies(families.toArray, qualifiers.toArray)
 
     // set versions
-    // short circuit if no versions
-    if (versions.isEmpty) return Iterator()
     val (minVersion, maxVersion) = versions.span.map(_.normalize).getOrElse(None -> None)
+    // short circuit if no versions
+    if (minVersion.isEmpty && maxVersion.isEmpty) return Iterator()
     minVersion.foreach(v => scanner.setMinTimestamp(v))
     maxVersion.foreach(v => scanner.setMaxTimestamp(v))
 
@@ -247,7 +233,7 @@ case class HBaseTable(
     filters.size match {
       case 0 =>
       case 1 => scanner.setFilter(filters.head)
-      case _ => scanner.setFilter(new FilterList(filters.asJava, Operator.MUST_PASS_ONE))
+      case _ => scanner.setFilter(new FilterList(filters.asJava, Operator.MUST_PASS_ALL))
     }
 
     new Iterator[Cell] with Closeable {
@@ -255,9 +241,7 @@ case class HBaseTable(
       private var currentBatch: Iterator[KeyValue] = Iterator()
       private var finished: Boolean = false
 
-      /**
-       * Load the next batch into `current`, and request a new batch for `next`.
-       */
+      /** Load the next batch into `current`, and request a new batch for `next`. */
       private def requestBatch(): Unit = {
         val batch = nextBatch.join()
         if (batch == null) finished = true
@@ -281,13 +265,6 @@ case class HBaseTable(
       def next(): Cell = Cell(currentBatch.next())
     }
   }
-
-  /**
-   * Creates a [[org.hbase.async.Scanner]] over this table. Scanner instance are *not* thread safe.
-   * Scanners will automatically close themselves when they are out of rows, or if they timeout.
-   * Scanners may be closed explicitly if not used fully.
-   */
-  private def scanner(): Scanner = ???
 }
 
 object HBaseTable {
