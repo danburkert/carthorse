@@ -3,8 +3,7 @@ package carthorse
 import java.{util => ju}
 
 import org.hbase.async.KeyValue
-import java.util.Objects
-import com.google.common.primitives.{UnsignedBytes, Bytes}
+import com.google.common.primitives.UnsignedBytes
 
 final case class Cell(
     rowkey: RowKey,
