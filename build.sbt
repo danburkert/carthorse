@@ -10,10 +10,7 @@ resolvers += Resolver.sonatypeRepo("snapshots")
 
 libraryDependencies += "danburkert" %% "continuum" % "0.4-SNAPSHOT"
 
-libraryDependencies ++= Seq(
-    "com.chuusai" % "shapeless" % "2.0.0-M1" cross CrossVersion.full
-    //  "com.chuusai" % "shapeless_2.10.2" % "2.0.0-M1" // alternatively ...
-      )
+libraryDependencies += "com.chuusai" % "shapeless" % "2.0.0-M1" cross CrossVersion.full
 
 libraryDependencies += "com.google.guava" % "guava" % "15.0"
 
@@ -26,10 +23,6 @@ libraryDependencies += "io.netty" % "netty" % "3.8.0.Final"
 libraryDependencies += "com.stumbleupon" % "async" % "1.4.0"
 
 libraryDependencies += "org.apache.zookeeper" % "zookeeper" % "3.3.6" notTransitive()
-
-libraryDependencies += "org.scala-lang" %% "scala-pickling" % "0.8.0-SNAPSHOT"
-
-libraryDependencies += "org.scala-lang" %% "scala-spores" % "0.1-SNAPSHOT"
 
 libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.0.13"
 

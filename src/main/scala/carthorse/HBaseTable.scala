@@ -283,7 +283,7 @@ case class HBaseTable(
   }
 
   def scan(): Iterator[Cell] with Closeable =
-    getScanner().fold(EmptyScanIterator: Iterator[Cell] with Closeable)(new ScanIterator(_))
+    getScanner().map(new ScanIterator(_)).getOrElse(EmptyScanIterator)
 }
 
 object HBaseTable {
