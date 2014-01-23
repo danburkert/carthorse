@@ -10,6 +10,10 @@ resolvers += Resolver.sonatypeRepo("snapshots")
 
 libraryDependencies += "danburkert" %% "continuum" % "0.4-SNAPSHOT"
 
+libraryDependencies += "org.apache.hbase" % "hbase-common" % "0.96.1-hadoop2"
+
+libraryDependencies += "org.apache.hadoop" % "hadoop-common" % "2.2.0"
+
 libraryDependencies += "com.chuusai" % "shapeless" % "2.0.0-M1" cross CrossVersion.full
 
 libraryDependencies += "com.google.guava" % "guava" % "15.0"
