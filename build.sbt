@@ -10,6 +10,11 @@ resolvers += Resolver.sonatypeRepo("snapshots")
 
 libraryDependencies += "danburkert" %% "continuum" % "0.4-SNAPSHOT"
 
+libraryDependencies ++= Seq(
+    "com.chuusai" % "shapeless" % "2.0.0-M1" cross CrossVersion.full
+    //  "com.chuusai" % "shapeless_2.10.2" % "2.0.0-M1" // alternatively ...
+      )
+
 libraryDependencies += "com.google.guava" % "guava" % "15.0"
 
 libraryDependencies += "com.google.code.findbugs" % "jsr305" % "1.3.+"

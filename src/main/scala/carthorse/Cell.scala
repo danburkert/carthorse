@@ -44,7 +44,8 @@ final case class Cell(
     if (qualifier != 0) return qualifier
     val version = this.version compare other.version
     if (version != 0) return version
-    return UnsignedBytes.lexicographicalComparator().compare(this.value, other.value)
+
+    UnsignedBytes.lexicographicalComparator().compare(this.value, other.value)
   }
 }
 

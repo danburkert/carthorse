@@ -3,9 +3,6 @@ package carthorse
 import org.scalatest.prop.GeneratorDrivenPropertyChecks
 import org.scalatest.{Matchers, PropSpec, BeforeAndAfterAll}
 
-/**
- * Created by dan on 1/6/14.
- */
 class HBaseTableFilterSpec
   extends PropSpec
   with GeneratorDrivenPropertyChecks
@@ -13,21 +10,35 @@ class HBaseTableFilterSpec
   with BeforeAndAfterAll
   with Generators {
 
-  property("spores") {
-    import scala.spores._
-    import scala.pickling._
-    import binary._
+  def foo(x: Int): Int = {
+    x + 2
+  }
 
-    val s = spore {
-      (x: Int) => { x }
+  property("spores") {
+//    import scala.spores._
+    import scala.pickling._
+    import json._
+
+//    val s = spore {
+//      foo _
+//    }
+
+    val f = (x: Int) => x + 42
+
+//    val p = s.pickle
+//    println(p)
+
+    implicit class FunctionPickler[T, U](f: Function1[T, U])(implicit pf: PickleFormat) extends SPickler[Function1[T, U]] with Unpickler[Function1[T, U]]  {
+      val format: PickleFormat = pf
+      def pickle(picklee: (T) => U, builder: PBuilder): Unit =
+
+      def unpickle(tag: => FastTypeTag[_], reader: PReader): Any = ???
+
     }
 
-    val p = s.pickle
-    println(p)
-
-    val f = p.unpickle[Spore[Int, Int]]
-
-    println(f(123))
-    println(s(3))
+    println(implicitly[SPickler[Function1[Int, Int]]])
+//    println(f.pickle)
+//    println(f.pickle.unpickle[Function1[Int, Int]].apply(1))
+//    println(s(3))
   }
 }

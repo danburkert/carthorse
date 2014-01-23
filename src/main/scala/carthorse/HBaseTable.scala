@@ -91,6 +91,17 @@ case class HBaseTable(
   def viewVersions(versions: Interval[Long]): HBaseTable =
     copy(versions = this.versions intersect versions)
 
+  def maxVersions(maxVersions: Option[Int]): HBaseTable = copy(maxVersions = maxVersions)
+
+  def maxCells(maxCells: Option[Int]): HBaseTable = copy(maxCells = maxCells)
+
+  def maxRows(maxRows: Option[Int]): HBaseTable = copy(maxRows = maxRows)
+
+  def maxBytes(maxBytes: Option[Long]): HBaseTable = copy(maxBytes = maxBytes)
+
+  def populateBlockCache(populateBlockCache: Boolean): HBaseTable =
+    copy(populateBlockCache = populateBlockCache)
+
   def isEmpty: Boolean = rows.isEmpty || columns.isEmpty || versions.isEmpty
 
   /**
@@ -182,23 +193,22 @@ case class HBaseTable(
       Some(new TimestampsFilter(timestamps:_*))
     }
 
-  def scan(
-      maxVersions: Option[Int] = maxVersions,
-      maxCells: Option[Int] = maxCells,
-      maxRows: Option[Int] = maxRows,
-      maxBytes: Option[Long] = maxBytes,
-      populateBlockCache: Boolean = populateBlockCache
-  ): Iterator[Cell] = {
+
+  /**
+   * Return a scanner over the table view, or None if it can be determined that the Scanner would
+   * contain no results.
+   */
+  private def getScanner(): Option[Scanner] = {
     val scanner = client.newScanner(name)
 
     // set start and stop rowkey
     // short circuit if no rows
-    if (rows.isEmpty) return Iterator()
+    if (rows.isEmpty) return None
     val (startKey, stopKey): (Option[RowKey], Option[RowKey]) = rows.span.map(_.normalize).getOrElse(None -> None)
     startKey.foreach(s => scanner.setStartKey(s.bytes))
     // asynchbase uses the empty byte array as a special stop key to signify 'scan to end of table',
     // so if this table's stop key is the empty array, we replace it with Array(0x00).
-    stopKey.foreach(s => scanner.setStopKey(if (s.bytes.length == 0) Array[Byte](0) else s.bytes))
+    stopKey.foreach(s => scanner.setStopKey(if (s.bytes.isEmpty) Array[Byte](0) else s.bytes))
 
     // set columns
     val (families, qualifiers): (Seq[Array[Byte]], Seq[Array[Array[Byte]]]) = columns.map {
@@ -216,15 +226,13 @@ case class HBaseTable(
     // sanity checking
     require(families.size == qualifiers.length)
     // short circuit if no families
-    if (families.isEmpty) return Iterator()
-    val f = families.toArray
-    val q = qualifiers.toArray
+    if (families.isEmpty) return None
     scanner.setFamilies(families.toArray, qualifiers.toArray)
 
     // set versions
     val (minVersion, maxVersion) = versions.span.map(_.normalize).getOrElse(None -> None)
     // short circuit if no versions
-    if (minVersion.isEmpty && maxVersion.isEmpty) return Iterator()
+    if (minVersion.isEmpty && maxVersion.isEmpty) return None
     minVersion.foreach(v => scanner.setMinTimestamp(v))
     maxVersion.foreach(v => scanner.setMaxTimestamp(v))
 
@@ -236,35 +244,46 @@ case class HBaseTable(
       case _ => scanner.setFilter(new FilterList(filters.asJava, Operator.MUST_PASS_ALL))
     }
 
-    new Iterator[Cell] with Closeable {
-      private var nextBatch: Deferred[ju.ArrayList[ju.ArrayList[KeyValue]]] = scanner.nextRows()
-      private var currentBatch: Iterator[KeyValue] = Iterator()
-      private var finished: Boolean = false
-
-      /** Load the next batch into `current`, and request a new batch for `next`. */
-      private def requestBatch(): Unit = {
-        val batch = nextBatch.join()
-        if (batch == null) finished = true
-        else {
-          currentBatch = (Iterables.concat(batch): jl.Iterable[KeyValue]).iterator().asScala
-          nextBatch = scanner.nextRows()
-        }
-      }
-
-      @tailrec
-      def hasNext(): Boolean = {
-        if (finished) false
-        else if (currentBatch.hasNext) true
-        else {
-          requestBatch()
-          hasNext()
-        }
-      }
-
-      def close(): Unit = scanner.close().join()
-      def next(): Cell = Cell(currentBatch.next())
-    }
+    Some(scanner)
   }
+
+  class ScanIterator(scanner: Scanner) extends Iterator[Cell] with Closeable {
+    private var nextBatch: Deferred[ju.ArrayList[ju.ArrayList[KeyValue]]] = scanner.nextRows()
+    private var currentBatch: Iterator[KeyValue] = Iterator()
+    private var finished: Boolean = false
+
+    /** Load the next batch into `current`, and request a new batch for `next`. */
+    private def requestBatch(): Unit = {
+      val batch = nextBatch.join()
+      if (batch == null) finished = true
+      else {
+        currentBatch = (Iterables.concat(batch): jl.Iterable[KeyValue]).iterator().asScala
+        nextBatch = scanner.nextRows()
+      }
+    }
+
+    @tailrec
+    final def hasNext: Boolean = {
+      if (finished) false
+      else if (currentBatch.hasNext) true
+      else {
+        requestBatch()
+        hasNext
+      }
+    }
+
+    def close(): Unit = scanner.close().join()
+    def next(): Cell = Cell(currentBatch.next())
+  }
+
+  object EmptyScanIterator extends Iterator[Cell] with Closeable {
+    def hasNext: Boolean = false
+    def next(): Cell = null
+    def close(): Unit = {}
+  }
+
+  def scan(): Iterator[Cell] with Closeable =
+    getScanner().fold(EmptyScanIterator: Iterator[Cell] with Closeable)(new ScanIterator(_))
 }
 
 object HBaseTable {
