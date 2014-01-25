@@ -1,6 +1,7 @@
 import com.google.common.primitives.UnsignedBytes
 import continuum.Discrete
 import java.{util => ju}
+import org.kiji.schema.{HBaseEntityId, EntityId}
 
 package object carthorse {
 
@@ -34,5 +35,17 @@ package object carthorse {
     def hashCode(identifier: Identifier): Int = ju.Arrays.hashCode(identifier.bytes)
 
     def minimum: Identifier = new Identifier(Array())
+  }
+
+
+  implicit object EntityIdImplicits extends Ordering[EntityId] with Discrete[EntityId] {
+
+    implicit def entityIdToRowKey(entityId: EntityId): RowKey = entityId.getHBaseRowKey : RowKey
+//    implicit def rowKeyToEntityId(rowKey: RowKey): EntityId = HBaseEntityId.fromHBaseRowKey(rowKey.bytes)
+
+    def next(entityId: EntityId): Option[EntityId] =
+      Identifier.next(entityId).map(rowkey => HBaseEntityId.fromHBaseRowKey(rowkey.bytes))
+
+    def compare(x: EntityId, y: EntityId): Int = Identifier.compare(x, y)
   }
 }

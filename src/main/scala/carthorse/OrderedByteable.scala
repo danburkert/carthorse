@@ -2,8 +2,8 @@ package carthorse
 
 import java.{lang => jl}
 
-import org.apache.hadoop.hbase.util.SimplePositionedByteRange
-import org.apache.hadoop.hbase.types._
+//import org.apache.hadoop.hbase.util.SimplePositionedByteRange
+//import org.apache.hadoop.hbase.types._
 
 //trait OrderedByteable[T] {
 //  def toBytesAsc: Array[Byte]
@@ -11,140 +11,140 @@ import org.apache.hadoop.hbase.types._
 //  def fromBytesAsc(bytes: Array[Byte]): T
 //}
 
-import scala.reflect.runtime.universe._
-
-trait OrderedByteable[T] {
-  type J <: AnyRef // Corresponding type to T in java API
-  def ascDataType(implicit tt: TypeTag[T]): DataType[J]
-  def descDataType: DataType[J]
-  implicit def s2j(s: T): J
-}
-
-object OrderedByteable {
-
-  def toBytesAsc[T](value: T)(implicit ev: OrderedByteable[T], tt: TypeTag[T]): Array[Byte] = {
-    import ev._
-    val bytes = new SimplePositionedByteRange(ascDataType.encodedLength(value))
-    ascDataType.encode(bytes, value)
-    bytes.getBytes
-  }
-
-  def toBytesDesc[T](value: T)(implicit ev: OrderedByteable[T]): Array[Byte] = {
-    import ev._
-    val bytes = new SimplePositionedByteRange(descDataType.encodedLength(value))
-    descDataType.encode(bytes, value)
-    bytes.getBytes
-  }
-
-  implicit object IntOrderedByteable extends OrderedByteable[Int] {
-    type J = jl.Integer
-    def ascDataType(implicit tt: TypeTag[Int]): DataType[IntOrderedByteable.J] = OrderedInt32.ASCENDING
-    def descDataType: DataType[IntOrderedByteable.J] = OrderedInt32.DESCENDING
-    def s2j(s: Int): J = s
-  }
-
-  implicit object Tuple2OrderedByteable
-  extends OrderedByteable[(_ <: OrderedByteable[_],
-                           _ <: OrderedByteable[_])] {
-
-    type J = Array[AnyRef]
-
-
-    // Corresponding type to T in java API
-    def ascDataType(implicit tt: TypeTag[(_ <: OrderedByteable[_], _<: OrderedByteable[_])]): DataType[J] ={
-
-    ???
-    }
-
-    implicit def s2j(s: (_ <: OrderedByteable[_], _ <: OrderedByteable[_])): J = ???
-
-//    def ascDataType(implicit tt: TypeTag[(_ <: OrderedByteable[_], _ <: OrderedByteable[_])]): DataType[J] = tt match {
-//      case TypeRef(a, b, c) => {
-//        println(a.getClass + ": " + a)
-//        println(b.getClass + ": " + b)
-//        println(c.getClass + ": " + c)
-//        null
-//      }
+//import scala.reflect.runtime.universe._
+//
+//trait OrderedByteable[T] {
+//  type J <: AnyRef // Corresponding type to T in java API
+//  def ascDataType(implicit tt: TypeTag[T]): DataType[J]
+//  def descDataType: DataType[J]
+//  implicit def s2j(s: T): J
+//}
+//
+//object OrderedByteable {
+//
+//  def toBytesAsc[T](value: T)(implicit ev: OrderedByteable[T], tt: TypeTag[T]): Array[Byte] = {
+//    import ev._
+//    val bytes = new SimplePositionedByteRange(ascDataType.encodedLength(value))
+//    ascDataType.encode(bytes, value)
+//    bytes.getBytes
+//  }
+//
+//  def toBytesDesc[T](value: T)(implicit ev: OrderedByteable[T]): Array[Byte] = {
+//    import ev._
+//    val bytes = new SimplePositionedByteRange(descDataType.encodedLength(value))
+//    descDataType.encode(bytes, value)
+//    bytes.getBytes
+//  }
+//
+//  implicit object IntOrderedByteable extends OrderedByteable[Int] {
+//    type J = jl.Integer
+//    def ascDataType(implicit tt: TypeTag[Int]): DataType[IntOrderedByteable.J] = OrderedInt32.ASCENDING
+//    def descDataType: DataType[IntOrderedByteable.J] = OrderedInt32.DESCENDING
+//    def s2j(s: Int): J = s
+//  }
+//
+//  implicit object Tuple2OrderedByteable
+//  extends OrderedByteable[(_ <: OrderedByteable[_],
+//                           _ <: OrderedByteable[_])] {
+//
+//    type J = Array[AnyRef]
+//
+//
+//    // Corresponding type to T in java API
+//    def ascDataType(implicit tt: TypeTag[(_ <: OrderedByteable[_], _<: OrderedByteable[_])]): DataType[J] ={
+//
+//    ???
 //    }
-
-    def descDataType: DataType[J] = ???
-
-    implicit def s2j(s: (_ <: OrderedByteable[_], _ <: OrderedByteable[_])): J = ???
-  }
-
-}
-
-trait DT[S] {
-  type J <: AnyRef
-  def dataType: DataType[J]
-  def value: J
-  def encode: Array[Byte] = {
-    val dt = dataType
-    val v = value
-    val byteRange = new SimplePositionedByteRange(dt.encodedLength(v))
-    dt.encode(byteRange, v)
-    byteRange.getBytes
-  }
-}
-
-trait TD[+S] {
-  type J <: AnyRef
-  def dataType: DataType[J]
-  def bytes: Array[Byte]
-  def j2s(j: J): S
-  def decode: S = {
-    j2s(dataType.decode(new SimplePositionedByteRange(bytes)))
-  }
-}
-
-object DT {
-
-  implicit class ByteTD(val bytes: Array[Byte]) extends TD[Byte] {
-    type J = jl.Byte
-    def j2s(j: J): Byte = j
-    def dataType: DataType[J] = OrderedInt8.ASCENDING
-  }
-
-  implicit class IntTD(val bytes: Array[Byte]) extends TD[Int] {
-    type J = jl.Integer
-    def j2s(j: J): Int = j
-    def dataType: DataType[J] = OrderedInt32.ASCENDING
-  }
-
-  implicit object foo extends TD[(TD[Any], TD[Any])] {
-    type J = Array[AnyRef]
-
-    def dataType: DataType[foo.J] = ???
-
-    def bytes: Array[Byte] = ???
-
-    def j2s(j: foo.J): (TD[Any], TD[Any]) = ???
-  }
-
-  implicit class Tuple2TD[T1, T2](val bytes: Array[Byte])(implicit ev1: TD[T1], ev2: TD[T2]) extends TD[(T1, T2)] {
-    type J = Array[AnyRef]
-    def j2s(j: J): (T1, T2) = { assert(j.length == 2); j(0).asInstanceOf[T1] -> j(1).asInstanceOf[T2] } // we can't all be this good at API's
-    def dataType: DataType[J] = new Struct(Array(ev1.dataType, ev2.dataType))
-  }
-
-  implicit class ByteDT(byte: Byte) extends DT[Byte] {
-    type J = jl.Byte
-    def value: jl.Byte = byte
-    def dataType: DataType[J] = OrderedInt8.ASCENDING
-  }
-
-  implicit class IntDT(int: Int) extends DT[Int] {
-    type J = jl.Integer
-    def value: jl.Integer = new jl.Integer(int)
-    def dataType: DataType[J] = OrderedInt32.ASCENDING
-  }
-
-  implicit class Tuple2DT[T1 <% DT[T1], T2 <% DT[T2]](t: (T1, T2)) extends DT[(T1, T2)] {
-    type J = Array[AnyRef]
-    def value: J = Array(t._1.value, t._2.value)
-    def dataTypes: Array[DataType[_]] = Array(t._1.dataType, t._2.dataType)
-    def dataType: Struct = new Struct(dataTypes)
-  }
+//
+//    implicit def s2j(s: (_ <: OrderedByteable[_], _ <: OrderedByteable[_])): J = ???
+//
+////    def ascDataType(implicit tt: TypeTag[(_ <: OrderedByteable[_], _ <: OrderedByteable[_])]): DataType[J] = tt match {
+////      case TypeRef(a, b, c) => {
+////        println(a.getClass + ": " + a)
+////        println(b.getClass + ": " + b)
+////        println(c.getClass + ": " + c)
+////        null
+////      }
+////    }
+//
+//    def descDataType: DataType[J] = ???
+//
+//    implicit def s2j(s: (_ <: OrderedByteable[_], _ <: OrderedByteable[_])): J = ???
+//  }
+//
+//}
+//
+//trait DT[S] {
+//  type J <: AnyRef
+//  def dataType: DataType[J]
+//  def value: J
+//  def encode: Array[Byte] = {
+//    val dt = dataType
+//    val v = value
+//    val byteRange = new SimplePositionedByteRange(dt.encodedLength(v))
+//    dt.encode(byteRange, v)
+//    byteRange.getBytes
+//  }
+//}
+//
+//trait TD[+S] {
+//  type J <: AnyRef
+//  def dataType: DataType[J]
+//  def bytes: Array[Byte]
+//  def j2s(j: J): S
+//  def decode: S = {
+//    j2s(dataType.decode(new SimplePositionedByteRange(bytes)))
+//  }
+//}
+//
+//object DT {
+//
+//  implicit class ByteTD(val bytes: Array[Byte]) extends TD[Byte] {
+//    type J = jl.Byte
+//    def j2s(j: J): Byte = j
+//    def dataType: DataType[J] = OrderedInt8.ASCENDING
+//  }
+//
+//  implicit class IntTD(val bytes: Array[Byte]) extends TD[Int] {
+//    type J = jl.Integer
+//    def j2s(j: J): Int = j
+//    def dataType: DataType[J] = OrderedInt32.ASCENDING
+//  }
+//
+//  implicit object foo extends TD[(TD[Any], TD[Any])] {
+//    type J = Array[AnyRef]
+//
+//    def dataType: DataType[foo.J] = ???
+//
+//    def bytes: Array[Byte] = ???
+//
+//    def j2s(j: foo.J): (TD[Any], TD[Any]) = ???
+//  }
+//
+//  implicit class Tuple2TD[T1, T2](val bytes: Array[Byte])(implicit ev1: TD[T1], ev2: TD[T2]) extends TD[(T1, T2)] {
+//    type J = Array[AnyRef]
+//    def j2s(j: J): (T1, T2) = { assert(j.length == 2); j(0).asInstanceOf[T1] -> j(1).asInstanceOf[T2] } // we can't all be this good at API's
+//    def dataType: DataType[J] = new Struct(Array(ev1.dataType, ev2.dataType))
+//  }
+//
+//  implicit class ByteDT(byte: Byte) extends DT[Byte] {
+//    type J = jl.Byte
+//    def value: jl.Byte = byte
+//    def dataType: DataType[J] = OrderedInt8.ASCENDING
+//  }
+//
+//  implicit class IntDT(int: Int) extends DT[Int] {
+//    type J = jl.Integer
+//    def value: jl.Integer = new jl.Integer(int)
+//    def dataType: DataType[J] = OrderedInt32.ASCENDING
+//  }
+//
+//  implicit class Tuple2DT[T1 <% DT[T1], T2 <% DT[T2]](t: (T1, T2)) extends DT[(T1, T2)] {
+//    type J = Array[AnyRef]
+//    def value: J = Array(t._1.value, t._2.value)
+//    def dataTypes: Array[DataType[_]] = Array(t._1.dataType, t._2.dataType)
+//    def dataType: Struct = new Struct(dataTypes)
+//  }
 
 //  implicit class Tuple2DataType[T1 : DT, T2 : DT](foo: Tuple2[T1, T2]) extends carthorse.DT[Tuple2[T1, T2]] {
 //    def dataType: DataType[_] =
@@ -155,7 +155,7 @@ object DT {
 //  }
 
 
-}
+//}
 //
 //object OrderedByteable {
 //

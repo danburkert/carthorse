@@ -10,9 +10,17 @@ resolvers += Resolver.sonatypeRepo("snapshots")
 
 libraryDependencies += "danburkert" %% "continuum" % "0.4-SNAPSHOT"
 
-libraryDependencies += "org.apache.hbase" % "hbase-common" % "0.96.1-hadoop2"
+//libraryDependencies += "org.apache.hbase" % "hbase-common" % "0.96.1-hadoop2"
+//
+//libraryDependencies += "org.apache.hadoop" % "hadoop-common" % "2.2.0"
 
-libraryDependencies += "org.apache.hadoop" % "hadoop-common" % "2.2.0"
+libraryDependencies += "org.apache.hadoop" % "hadoop-client" % "2.0.0-mr1-cdh4.4.0"
+
+libraryDependencies += "org.apache.hadoop" % "hadoop-core" % "2.0.0-mr1-cdh4.4.0"
+
+libraryDependencies += "org.apache.hbase" % "hbase" % "0.94.6-cdh4.4.0"
+
+libraryDependencies += "org.kiji.schema" % "kiji-schema" % "1.3.4"
 
 libraryDependencies += "com.chuusai" % "shapeless" % "2.0.0-M1" cross CrossVersion.full
 
@@ -35,3 +43,5 @@ libraryDependencies += "log4j" % "log4j" % "1.2.15" notTransitive()
 libraryDependencies += "org.scalacheck" %% "scalacheck" % "1.10.1" % "test"
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.0" % "test"
+
+resolvers += "kiji-repos" at "https://repo.wibidata.com/artifactory/kiji"
