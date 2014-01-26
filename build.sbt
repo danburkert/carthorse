@@ -22,6 +22,8 @@ libraryDependencies += "org.apache.hbase" % "hbase" % "0.94.6-cdh4.4.0"
 
 libraryDependencies += "org.kiji.schema" % "kiji-schema" % "1.3.4"
 
+libraryDependencies += "org.kiji.schema" % "kiji-schema" % "1.3.4" classifier "tests"
+
 libraryDependencies += "com.chuusai" % "shapeless" % "2.0.0-M1" cross CrossVersion.full
 
 libraryDependencies += "com.google.guava" % "guava" % "15.0"
