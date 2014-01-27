@@ -15,7 +15,7 @@ import scala.reflect.runtime.universe._
 
 trait OrderedByteable[T] {
   type J <: AnyRef // Corresponding type to T in java API
-  def ascDataType(implicit tt: TypeTag[T]): DataType[J]
+  def ascDataType(implicit tt: _ <: TypeTag[T]): DataType[J]
   def descDataType: DataType[J]
   implicit def s2j(s: T): J
 }
@@ -38,24 +38,18 @@ object OrderedByteable {
 
   implicit object IntOrderedByteable extends OrderedByteable[Int] {
     type J = jl.Integer
-    def ascDataType(implicit tt: TypeTag[Int]): DataType[IntOrderedByteable.J] = OrderedInt32.ASCENDING
+    def ascDataType(implicit tt: _<: TypeTag[Int]): DataType[IntOrderedByteable.J] = OrderedInt32.ASCENDING
     def descDataType: DataType[IntOrderedByteable.J] = OrderedInt32.DESCENDING
     def s2j(s: Int): J = s
   }
 
   implicit object Tuple2OrderedByteable
-  extends OrderedByteable[(_ <: OrderedByteable[_],
-                           _ <: OrderedByteable[_])] {
+  extends OrderedByteable[(_ <: OrderedByteable[_], _ <: OrderedByteable[_])] {
 
     type J = Array[AnyRef]
 
-
-    // Corresponding type to T in java API
-    def ascDataType(implicit tt: TypeTag[(_ <: OrderedByteable[_], _<: OrderedByteable[_])]): DataType[J] ={
-
-    ???
-    }
-
+    def ascDataType(implicit tt: _ <: TypeTag[(_ <: OrderedByteable[_], _<: OrderedByteable[_])]): DataType[J] = ???
+    def descDataType: DataType[J] = ???
     implicit def s2j(s: (_ <: OrderedByteable[_], _ <: OrderedByteable[_])): J = ???
 
 //    def ascDataType(implicit tt: TypeTag[(_ <: OrderedByteable[_], _ <: OrderedByteable[_])]): DataType[J] = tt match {
@@ -67,11 +61,7 @@ object OrderedByteable {
 //      }
 //    }
 
-    def descDataType: DataType[J] = ???
-
-    implicit def s2j(s: (_ <: OrderedByteable[_], _ <: OrderedByteable[_])): J = ???
   }
-
 }
 
 trait DT[S] {
