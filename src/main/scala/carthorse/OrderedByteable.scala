@@ -15,14 +15,15 @@ import scala.reflect.runtime.universe._
 
 trait OrderedByteable[T] {
   type J <: AnyRef // Corresponding type to T in java API
-  def ascDataType(implicit tt: _ <: TypeTag[T]): DataType[J]
+  def ascDataType(implicit tt: TypeTag[T]): DataType[J]
   def descDataType: DataType[J]
   implicit def s2j(s: T): J
 }
 
 object OrderedByteable {
 
-  def toBytesAsc[T](value: T)(implicit ev: OrderedByteable[T], tt: TypeTag[T]): Array[Byte] = {
+  def toBytesAsc[T <% OrderedByteable[T] : TypeTag](value: T): Array[Byte] = {
+    val ev: OrderedByteable[T] = value
     import ev._
     val bytes = new SimplePositionedByteRange(ascDataType.encodedLength(value))
     ascDataType.encode(bytes, value)
@@ -36,21 +37,30 @@ object OrderedByteable {
     bytes.getBytes
   }
 
-  implicit object IntOrderedByteable extends OrderedByteable[Int] {
+  implicit class IntOrderedByteable(value: Int) extends OrderedByteable[Int] {
     type J = jl.Integer
-    def ascDataType(implicit tt: _<: TypeTag[Int]): DataType[IntOrderedByteable.J] = OrderedInt32.ASCENDING
-    def descDataType: DataType[IntOrderedByteable.J] = OrderedInt32.DESCENDING
+    def ascDataType(implicit tt: TypeTag[Int]): DataType[J] = OrderedInt32.ASCENDING
+    def descDataType: DataType[J] = OrderedInt32.DESCENDING
     def s2j(s: Int): J = s
   }
 
-  implicit object Tuple2OrderedByteable
-  extends OrderedByteable[(_ <: OrderedByteable[_], _ <: OrderedByteable[_])] {
+  implicit class Tuple2OrderedByteable[T1 <% OrderedByteable[T1] : TypeTag, T2 <% OrderedByteable[T2] : TypeTag]
+      (t: (T1, T2)) extends OrderedByteable[(T1, T2)] {
 
     type J = Array[AnyRef]
 
-    def ascDataType(implicit tt: _ <: TypeTag[(_ <: OrderedByteable[_], _<: OrderedByteable[_])]): DataType[J] = ???
+    def ascDataType(implicit tt: TypeTag[(T1, T2)]): DataType[J] = {
+      new Struct(Array(t._1.ascDataType, t._2.ascDataType))
+    }
     def descDataType: DataType[J] = ???
-    implicit def s2j(s: (_ <: OrderedByteable[_], _ <: OrderedByteable[_])): J = ???
+
+    implicit def s2j(s: (T1, T2)): J = Array(t._1, t._2).map(_.asInstanceOf[AnyRef])
+
+
+
+//    def ascDataType(implicit tt: TypeTag[(OrderedByteable[_], OrderedByteable[_])]): DataType[J] = ???
+//    def descDataType: DataType[J] = ???
+//    implicit def s2j(s: (OrderedByteable[_], OrderedByteable[_])): J = ???
 
 //    def ascDataType(implicit tt: TypeTag[(_ <: OrderedByteable[_], _ <: OrderedByteable[_])]): DataType[J] = tt match {
 //      case TypeRef(a, b, c) => {
