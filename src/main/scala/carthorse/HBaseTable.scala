@@ -1,11 +1,11 @@
 package carthorse
 
-import java.{util => ju}
-import java.{lang => jl}
 import java.io.Closeable
+import java.{lang => jl}
+import java.{util => ju}
 
-import scala.collection.JavaConverters._
 import scala.annotation.tailrec
+import scala.collection.JavaConverters._
 
 import com.google.common.collect.Iterables
 import continuum.bound.{Unbounded, Open, Closed}
@@ -15,7 +15,6 @@ import org.hbase.async.FilterList.Operator
 import org.hbase.async._
 
 import carthorse.async.Deferred
-import carthorse.async.Deferred.su2ch
 
 /**
  * A view of an HBase table. Clients can use an instance of this class to perform scans, gets,
