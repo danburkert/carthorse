@@ -17,12 +17,12 @@ class HBaseTableIntegrationSpec
   val Families = List("a")
 
   var hbase: HBase = _
-  var table: HBaseTable = _
+  var table: HBaseTable[RowKey] = _
 
-  val cells: Set[Cell] = (for (byte <- Byte.MinValue to Byte.MaxValue) yield {
+  val cells: Set[Cell[RowKey]] = (for (byte <- Byte.MinValue to Byte.MaxValue) yield {
     val bytes = Array(byte.toByte)
     val version = if (byte >= 0) byte else byte + 256
-    Cell(bytes, Families(0), bytes, version, bytes)
+    Cell[RowKey](bytes, Families(0), bytes, version, bytes)
   }).toSet
 
   override protected def beforeAll(): Unit = {

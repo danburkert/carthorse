@@ -43,65 +43,76 @@ import carthorse.async.Deferred
  * @param maxBytes a performance tuning parameter which limits the maximum number of bytes fetched
  *        by the client in a single RPC request.  HBase 0.96+, ignored for earlier versions.
  */
-case class HBaseTable(
+case class HBaseTable[R <% OrderedByteable[R]](
     client: HBaseClient,
     name: String,
-    rows: IntervalSet[RowKey] = IntervalSet(Interval.all[RowKey]),
+    rows: IntervalSet[R] = IntervalSet(Interval.all[RowKey]),
     columns: Map[String, IntervalSet[Qualifier]],
     versions: IntervalSet[Long] = IntervalSet(Interval.atLeast(0)),
     maxVersions: Option[Int] = None,
     maxCells: Option[Int] = None,
     maxRows: Option[Int] = None,
     maxBytes: Option[Long] = None,
-    populateBlockCache: Boolean = true
+    populateBlockCache: Boolean = true,
+    encodeRowKey: (R => RowKey),
+    decodeRowKey: (RowKey => R)
 ) {
 
-  def viewRow(row: RowKey): HBaseTable = viewRows(row)
+  type Table = HBaseTable[R]
 
-  def viewRows(rows: RowKey*): HBaseTable = viewRows(IntervalSet(rows.map(Interval(_)):_*))
+  def viewRow(row: R): Table = viewRows(row)
 
-  def viewRows(rows: Interval[RowKey]): HBaseTable = viewRows(IntervalSet(rows))
+  def viewRows(rows: R*): Table = viewRows(IntervalSet(rows.map(Interval(_)):_*))
 
-  def viewRows(rows: IntervalSet[RowKey]): HBaseTable = copy(rows = this.rows intersect rows)
+  def viewRows(rows: Interval[R]): Table = viewRows(IntervalSet(rows))
 
-  def viewFamily(family: String) = viewFamilies(family)
+  def viewRows(rows: IntervalSet[R]): Table = copy(rows = this.rows.intersect(rows.map(_ map encodeRowKey)))
 
-  def viewFamilies(family: String*) = copy(columns = columns filterKeys family.toSet)
+  def viewFamily(family: String): Table = viewFamilies(family)
 
-  def viewColumn(family: String, qualifier: Qualifier): HBaseTable = viewColumns(family, qualifier)
+  def viewFamilies(family: String*): Table = copy(columns = columns filterKeys family.toSet)
 
-  def viewColumns(family: String, qualifiers: Qualifier*): HBaseTable =
+  def viewColumn(family: String, qualifier: Qualifier): Table = viewColumns(family, qualifier)
+
+  def viewColumns(family: String, qualifiers: Qualifier*): Table =
     viewColumns(family, IntervalSet(qualifiers.map(Interval(_)):_*))
 
-  def viewColumns(family: String, qualifiers: IntervalSet[Qualifier]): HBaseTable =
+  def viewColumns(family: String, qualifiers: IntervalSet[Qualifier]): Table =
     viewColumns(Map(family -> qualifiers))
 
-  def viewColumns(columns: Map[String, IntervalSet[Qualifier]]): HBaseTable = {
+  def viewColumns(columns: Map[String, IntervalSet[Qualifier]]): Table = {
     val mergedColumns = for ((family, qualifiers) <- columns)
       yield (family, this.columns.get(family).fold(qualifiers)((t: IntervalSet[Qualifier]) => t.intersect(qualifiers)))
     copy(columns = mergedColumns.filter{ case (family, qualifiers) => qualifiers.nonEmpty })
   }
 
-  def viewVersion(version: Long): HBaseTable = viewVersions(version)
+  def viewVersion(version: Long): Table = viewVersions(version)
 
-  def viewVersions(versions: Long*): HBaseTable = copy(versions =
+  def viewVersions(versions: Long*): Table = copy(versions =
       this.versions intersect IntervalSet(versions.map(Interval(_)):_*))
 
-  def viewVersions(versions: Interval[Long]): HBaseTable =
+  def viewVersions(versions: Interval[Long]): Table =
     copy(versions = this.versions intersect versions)
 
-  def maxVersions(maxVersions: Option[Int]): HBaseTable = copy(maxVersions = maxVersions)
+  def maxVersions(maxVersions: Option[Int]): Table = copy(maxVersions = maxVersions)
 
-  def maxCells(maxCells: Option[Int]): HBaseTable = copy(maxCells = maxCells)
+  def maxCells(maxCells: Option[Int]): Table = copy(maxCells = maxCells)
 
-  def maxRows(maxRows: Option[Int]): HBaseTable = copy(maxRows = maxRows)
+  def maxRows(maxRows: Option[Int]): Table = copy(maxRows = maxRows)
 
-  def maxBytes(maxBytes: Option[Long]): HBaseTable = copy(maxBytes = maxBytes)
+  def maxBytes(maxBytes: Option[Long]): Table = copy(maxBytes = maxBytes)
 
-  def populateBlockCache(populateBlockCache: Boolean): HBaseTable =
+  def populateBlockCache(populateBlockCache: Boolean): Table =
     copy(populateBlockCache = populateBlockCache)
 
   def isEmpty: Boolean = rows.isEmpty || columns.isEmpty || versions.isEmpty
+
+  def transformRowKeys[T <% Ordered[T]](encode: T => R)(decode: R => T): HBaseTable[T] = {
+    val fullEncode: T => RowKey = encode andThen encodeRowKey
+    val fullDecode: RowKey => T = decodeRowKey andThen decode
+
+    copy(encodeRowKey = fullEncode, decodeRowKey = fullDecode)
+  }
 
   /**
    * Filter for filtering all cells not in a row contained in the interval set of rows. Not
@@ -246,10 +257,11 @@ case class HBaseTable(
     Some(scanner)
   }
 
-  class ScanIterator(scanner: Scanner) extends Iterator[Cell] with Closeable {
+  class ScanIterator(scanner: Scanner) extends Iterator[Cell[R]] with Closeable {
     private var nextBatch: Deferred[ju.ArrayList[ju.ArrayList[KeyValue]]] = scanner.nextRows()
     private var currentBatch: Iterator[KeyValue] = Iterator()
     private var finished: Boolean = false
+    private def toCell(kv: KeyValue): Cell[R] = Cell(decodeRowKey)(kv)
 
     /** Load the next batch into `current`, and request a new batch for `next`. */
     private def requestBatch(): Unit = {
@@ -272,20 +284,25 @@ case class HBaseTable(
     }
 
     def close(): Unit = scanner.close().join()
-    def next(): Cell = Cell(currentBatch.next())
+    def next(): Cell[R] = toCell(currentBatch.next())
   }
 
-  object EmptyScanIterator extends Iterator[Cell] with Closeable {
+  object EmptyScanIterator extends Iterator[Cell[R]] with Closeable {
     def hasNext: Boolean = false
-    def next(): Cell = null
+    def next(): Cell[R] = null
     def close(): Unit = {}
   }
 
-  def scan(): Iterator[Cell] with Closeable =
+  def scan(): Iterator[Cell[R]] with Closeable =
     getScanner().map(new ScanIterator(_)).getOrElse(EmptyScanIterator)
 }
 
 object HBaseTable {
-  def apply(client: HBaseClient, name: String, families: Iterable[String]): HBaseTable =
-    HBaseTable(client, name, columns = families.map(_ -> IntervalSet(Interval.all[Qualifier])).toMap)
+  def apply(client: HBaseClient, name: String, families: Iterable[String]): HBaseTable[RowKey] =
+    HBaseTable[RowKey](
+      client,
+      name,
+      columns = families.map(_ -> IntervalSet(Interval.all[Qualifier])).toMap,
+      encodeRowKey = identity,
+      decodeRowKey = identity)
 }

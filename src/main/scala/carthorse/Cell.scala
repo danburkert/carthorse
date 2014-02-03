@@ -5,18 +5,18 @@ import java.{util => ju}
 import org.hbase.async.KeyValue
 import com.google.common.primitives.UnsignedBytes
 
-final case class Cell(
-    rowkey: RowKey,
+final case class Cell[R <% Ordered[R]](
+    rowkey: R,
     family: String,
     qualifier: Qualifier,
     version: Long,
     value: Array[Byte])
-  extends Ordered[Cell] {
+  extends Ordered[Cell[R]] {
 
   override def equals(any: Any): Boolean = any match {
     case other@Cell(otherRowkey, otherFamily, otherQualifier, otherVersion, otherValue) =>
       (this eq other) ||
-        (Identifier.equals(rowkey, otherRowkey)
+        (Cell.equals(rowkey, otherRowkey)
           && family == otherFamily
           && Identifier.equals(qualifier, otherQualifier)
           && version == otherVersion
@@ -29,14 +29,14 @@ final case class Cell(
       41 * (
         41 * (
           41 * (
-            41 + Identifier.hashCode(rowkey)
+            41 + Cell.hashCode(rowkey)
           ) + family.hashCode
         ) + Identifier.hashCode(qualifier)
       ) + version.hashCode
     ) + ju.Arrays.hashCode(value)
 
-  def compare(other: Cell): Int = {
-    val rowkey = Identifier.compare(this.rowkey, other.rowkey)
+  def compare(other: Cell[R]): Int = {
+    val rowkey = this.rowkey compare other.rowkey
     if (rowkey != 0) return rowkey
     val family = this.family compare other.family
     if (family != 0) return family
@@ -50,6 +50,16 @@ final case class Cell(
 }
 
 object Cell {
-  def apply(kv: KeyValue): Cell =
-    Cell(kv.key, new String(kv.family, Charset), kv.qualifier, kv.timestamp, kv.value)
+  def apply[R <% Ordered[R]](r: (RowKey => R))(kv: KeyValue): Cell[R] =
+    Cell(r(kv.key), new String(kv.family, Charset), kv.qualifier, kv.timestamp, kv.value)
+
+  def equals(a: Any, b: Any): Boolean = (a, b) match {
+    case (x: Identifier, y: Identifier) => Identifier.equals(x, y)
+    case _ => a == b
+  }
+
+  def hashCode(a: Any): Int = a match {
+    case x: Identifier => Identifier.hashCode(x)
+    case _ => a.hashCode
+  }
 }

@@ -35,4 +35,9 @@ package object carthorse {
 
     def minimum: Identifier = new Identifier(Array())
   }
+
+  implicit class OrderedBytes(bytes: Array[Byte]) extends Ordered[Array[Byte]] {
+    override def compare(other: Array[Byte]): Int =
+      UnsignedBytes.lexicographicalComparator().compare(bytes, other)
+  }
 }
