@@ -5,7 +5,7 @@ import java.{lang => jl}
 import org.apache.hadoop.hbase.util.SimplePositionedByteRange
 import org.apache.hadoop.hbase.types._
 
-trait OrderedByteable[T] {
+trait OrderedByteable[T] extends Ordered[T] {
   type J <: AnyRef // Corresponding type to T in java API
   def ascDataType: DataType[J]
   def descDataType: DataType[J]
@@ -39,12 +39,13 @@ object OrderedByteable {
     descDataType.decode(new SimplePositionedByteRange(bytes))
   }
 
-  implicit object ByteOrderedByteable extends OrderedByteable[Byte] {
+  implicit class ByteOrderedByteable(value: Byte) extends OrderedByteable[Byte] {
     type J = jl.Byte
     def ascDataType: DataType[J] = OrderedInt8.ASCENDING
     def descDataType: DataType[J] = OrderedInt8.DESCENDING
     def s2j(s: Byte): J = s
     def j2s(j: J): Byte = j.byteValue()
+    override def compare(that: Byte): Int = value.compareTo(that)
   }
 
   implicit object ShortOrderedByteable extends OrderedByteable[Short] {
