@@ -43,19 +43,17 @@ import carthorse.async.Deferred
  * @param maxBytes a performance tuning parameter which limits the maximum number of bytes fetched
  *        by the client in a single RPC request.  HBase 0.96+, ignored for earlier versions.
  */
-case class HBaseTable[R <% OrderedByteable[R]](
+case class HBaseTable[R <% OrderedByteable[R] : OrderedByteable](
     client: HBaseClient,
     name: String,
-    rows: IntervalSet[R] = IntervalSet(Interval.all[RowKey]),
+    rows: IntervalSet[Array[Byte]] = IntervalSet(Interval.all[Array[Byte]]),
     columns: Map[String, IntervalSet[Qualifier]],
     versions: IntervalSet[Long] = IntervalSet(Interval.atLeast(0)),
     maxVersions: Option[Int] = None,
     maxCells: Option[Int] = None,
     maxRows: Option[Int] = None,
     maxBytes: Option[Long] = None,
-    populateBlockCache: Boolean = true,
-    encodeRowKey: (R => RowKey),
-    decodeRowKey: (RowKey => R)
+    populateBlockCache: Boolean = true
 ) {
 
   type Table = HBaseTable[R]
@@ -66,7 +64,7 @@ case class HBaseTable[R <% OrderedByteable[R]](
 
   def viewRows(rows: Interval[R]): Table = viewRows(IntervalSet(rows))
 
-  def viewRows(rows: IntervalSet[R]): Table = copy(rows = this.rows.intersect(rows.map(_ map encodeRowKey)))
+  def viewRows(rows: IntervalSet[R]): Table = copy(rows = this.rows.intersect(rows.map(_.map(OrderedByteable.toBytesAsc(_)))))
 
   def viewFamily(family: String): Table = viewFamilies(family)
 
@@ -107,13 +105,6 @@ case class HBaseTable[R <% OrderedByteable[R]](
 
   def isEmpty: Boolean = rows.isEmpty || columns.isEmpty || versions.isEmpty
 
-  def transformRowKeys[T <% Ordered[T]](encode: T => R)(decode: R => T): HBaseTable[T] = {
-    val fullEncode: T => RowKey = encode andThen encodeRowKey
-    val fullDecode: RowKey => T = decodeRowKey andThen decode
-
-    copy(encodeRowKey = fullEncode, decodeRowKey = fullDecode)
-  }
-
   /**
    * Filter for filtering all cells not in a row contained in the interval set of rows. Not
    * necessary if the interval set consists of a single interval, or entirely of specified rows.
@@ -123,13 +114,13 @@ case class HBaseTable[R <% OrderedByteable[R]](
     else {
       val filters = rows.toSeq.map { interval =>
         val start: Option[ScanFilter] = interval.lower.bound match {
-          case Closed(l)   => Some(new RowFilter(CompareOp.GREATER_OR_EQUAL, new BinaryComparator(l.bytes)))
-          case Open(l)     => Some(new RowFilter(CompareOp.GREATER, new BinaryComparator(l.bytes)))
+          case Closed(l)   => Some(new RowFilter(CompareOp.GREATER_OR_EQUAL, new BinaryComparator(l)))
+          case Open(l)     => Some(new RowFilter(CompareOp.GREATER, new BinaryComparator(l)))
           case Unbounded() => None
         }
         val end: Option[ScanFilter] = interval.upper.bound match {
-          case Closed(u)   => Some(new RowFilter(CompareOp.LESS_OR_EQUAL, new BinaryComparator(u.bytes)))
-          case Open(u)     => Some(new RowFilter(CompareOp.LESS, new BinaryComparator(u.bytes)))
+          case Closed(u)   => Some(new RowFilter(CompareOp.LESS_OR_EQUAL, new BinaryComparator(u)))
+          case Open(u)     => Some(new RowFilter(CompareOp.LESS, new BinaryComparator(u)))
           case Unbounded() => None
         }
 
@@ -214,11 +205,11 @@ case class HBaseTable[R <% OrderedByteable[R]](
     // set start and stop rowkey
     // short circuit if no rows
     if (rows.isEmpty) return None
-    val (startKey, stopKey): (Option[RowKey], Option[RowKey]) = rows.span.map(_.normalize).getOrElse(None -> None)
-    startKey.foreach(s => scanner.setStartKey(s.bytes))
+    val (startKey, stopKey): (Option[Array[Byte]], Option[Array[Byte]]) = rows.span.map(_.normalize).getOrElse(None -> None)
+    startKey.foreach(s => scanner.setStartKey(s))
     // asynchbase uses the empty byte array as a special stop key to signify 'scan to end of table',
     // so if this table's stop key is the empty array, we replace it with Array(0x00).
-    stopKey.foreach(s => scanner.setStopKey(if (s.bytes.isEmpty) Array[Byte](0) else s.bytes))
+    stopKey.foreach(s => scanner.setStopKey(if (s.isEmpty) Array[Byte](0) else s))
 
     // set columns
     val (families, qualifiers): (Seq[Array[Byte]], Seq[Array[Array[Byte]]]) = columns.map {
@@ -261,7 +252,6 @@ case class HBaseTable[R <% OrderedByteable[R]](
     private var nextBatch: Deferred[ju.ArrayList[ju.ArrayList[KeyValue]]] = scanner.nextRows()
     private var currentBatch: Iterator[KeyValue] = Iterator()
     private var finished: Boolean = false
-    private def toCell(kv: KeyValue): Cell[R] = Cell(decodeRowKey)(kv)
 
     /** Load the next batch into `current`, and request a new batch for `next`. */
     private def requestBatch(): Unit = {
@@ -284,7 +274,7 @@ case class HBaseTable[R <% OrderedByteable[R]](
     }
 
     def close(): Unit = scanner.close().join()
-    def next(): Cell[R] = toCell(currentBatch.next())
+    def next(): Cell[R] = Cell[R](currentBatch.next())
   }
 
   object EmptyScanIterator extends Iterator[Cell[R]] with Closeable {
@@ -298,11 +288,6 @@ case class HBaseTable[R <% OrderedByteable[R]](
 }
 
 object HBaseTable {
-  def apply(client: HBaseClient, name: String, families: Iterable[String]): HBaseTable[RowKey] =
-    HBaseTable[RowKey](
-      client,
-      name,
-      columns = families.map(_ -> IntervalSet(Interval.all[Qualifier])).toMap,
-      encodeRowKey = identity,
-      decodeRowKey = identity)
+  def apply[R : OrderedByteable](client: HBaseClient, name: String, families: Iterable[String]): HBaseTable[R] =
+    HBaseTable[R](client, name, columns = families.map(_ -> IntervalSet(Interval.all[Qualifier])).toMap)
 }

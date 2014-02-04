@@ -10,7 +10,7 @@ class HBase(quorum: Seq[String] = Seq("localhost:2181"), basePath: String = "/hb
 
   def ensureTableExists(name: String): Deferred[_] = client.ensureTableExists(name)
 
-  def openTable(name: String, families: String*): HBaseTable[RowKey] =
+  def openTable[R : OrderedByteable](name: String, families: String*): HBaseTable[R] =
     HBaseTable(client, name, families = families)
 
   def close(): Deferred[_] = client.shutdown()

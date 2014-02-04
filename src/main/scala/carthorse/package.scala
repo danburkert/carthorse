@@ -5,7 +5,6 @@ import java.{util => ju}
 package object carthorse {
 
   val Charset = java.nio.charset.Charset.forName("UTF-8")
-  type RowKey = Identifier
   type Qualifier = Identifier
 
   implicit class Identifier(val bytes: Array[Byte]) extends AnyVal {
