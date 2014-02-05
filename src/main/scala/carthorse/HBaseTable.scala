@@ -43,7 +43,7 @@ import carthorse.async.Deferred
  * @param maxBytes a performance tuning parameter which limits the maximum number of bytes fetched
  *        by the client in a single RPC request.  HBase 0.96+, ignored for earlier versions.
  */
-case class HBaseTable[R <% OrderedByteable[R] : OrderedByteable](
+case class HBaseTable[R <% Ordered[R] : OrderedByteable](
     client: HBaseClient,
     name: String,
     rows: IntervalSet[Array[Byte]] = IntervalSet(Interval.all[Array[Byte]]),
@@ -288,6 +288,6 @@ case class HBaseTable[R <% OrderedByteable[R] : OrderedByteable](
 }
 
 object HBaseTable {
-  def apply[R : OrderedByteable](client: HBaseClient, name: String, families: Iterable[String]): HBaseTable[R] =
-    HBaseTable[R](client, name, columns = families.map(_ -> IntervalSet(Interval.all[Qualifier])).toMap)
+  def apply[R <% Ordered[R] : OrderedByteable](client: HBaseClient, name: String, families: Iterable[String]): HBaseTable[R] =
+    HBaseTable(client, name, columns = families.map(_ -> IntervalSet(Interval.all[Qualifier])).toMap)
 }
