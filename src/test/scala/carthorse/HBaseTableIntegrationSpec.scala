@@ -1,10 +1,13 @@
 package carthorse
 
+import java.{util => ju}
+
+import scala.collection.immutable.SortedSet
+
+import continuum.{IntervalSet, Interval}
 import org.hbase.async.{PutRequest, HBaseClient}
 import org.scalatest.prop.GeneratorDrivenPropertyChecks
 import org.scalatest.{PropSpec, BeforeAndAfterAll, Matchers}
-import continuum.{IntervalSet, Interval}
-import scala.collection.immutable.SortedSet
 
 class HBaseTableIntegrationSpec
   extends PropSpec
@@ -19,10 +22,10 @@ class HBaseTableIntegrationSpec
   var hbase: HBase = _
   var table: HBaseTable[Byte] = _
 
-  val cells: Set[Cell[Byte]] = (for (byte <- Byte.MinValue to Byte.MaxValue) yield {
-    val bytes = Array(byte.toByte)
+  val cells: Set[Cell] = (for (b <- Byte.MinValue to Byte.MaxValue; byte = b.toByte) yield {
+    val bytes = Array(byte)
     val version = if (byte >= 0) byte else byte + 256
-    Cell(byte.toByte, Families(0), bytes, version, bytes)
+    Cell(OrderedByteable.toBytesAsc(byte), Families(0), OrderedByteable.toBytesAsc(byte), version, bytes)
   }).toSet
 
   override protected def beforeAll(): Unit = {
@@ -51,9 +54,9 @@ class HBaseTableIntegrationSpec
       client.put(
         new PutRequest(
           tableBytes,
-          OrderedByteable.toBytesAsc(cell.rowkey),
+          cell.rowkey,
           familyBytes,
-          cell.qualifier.bytes,
+          cell.qualifier,
           cell.value,
           cell.version))
     }
@@ -70,7 +73,7 @@ class HBaseTableIntegrationSpec
 
   property("HBaseTable can scan all Cells in a table restricted by a rowkey interval.") {
     forAll { rowkey: Interval[Byte] =>
-      table.viewRows(rowkey).scan().toSet should equal (cells.filter(cell => rowkey(cell.rowkey)))
+      table.viewRows(rowkey).scan().toSet should equal (cells.filter(cell => rowkey(OrderedByteable.fromBytesAsc[Byte](cell.rowkey))))
     }
   }
 
@@ -78,7 +81,7 @@ class HBaseTableIntegrationSpec
     forAll { rks: List[Byte] =>
       val rowkeys = SortedSet(rks:_*)
       val result = table.viewRows(rks:_*).scan().toSet
-      val expected = cells.filter(cell => rowkeys(cell.rowkey))
+      val expected = cells.filter(cell => rowkeys(OrderedByteable.fromBytesAsc[Byte](cell.rowkey)))
       result should equal (expected)
     }
   }
@@ -86,40 +89,40 @@ class HBaseTableIntegrationSpec
   property("HBaseTable can scan all Cells in a table restricted by a rowkey interval set.") {
     forAll { rowkeys: IntervalSet[Byte] =>
       val result = table.viewRows(rowkeys).scan().toSet
-      val expected = cells.filter(cell => rowkeys(Interval.point(cell.rowkey)))
+      val expected = cells.filter(cell => rowkeys(Interval(OrderedByteable.fromBytesAsc[Byte](cell.rowkey))))
       result should equal (expected)
     }
   }
 
   property("HBaseTable can scan all Cells in a table restricted to a qualifier.") {
-    forAll { qualifier: Qualifier =>
+    forAll { qualifier: Byte =>
       val result = table.viewColumn(Families(0), qualifier).scan().toSet
-      val expected = cells.filter(cell => Identifier.equals(cell.qualifier, qualifier))
+      val expected = cells.filter(cell => OrderedByteable.fromBytesAsc[Byte](cell.qualifier) == qualifier)
       result should equal (expected)
     }
   }
 
   property("HBaseTable can scan all Cells in a table restricted to qualifiers.") {
-    forAll { qs: List[Qualifier] =>
+    forAll { qs: List[Byte] =>
       val qualifiers = SortedSet(qs:_*)
       val result = table.viewColumns(Families(0), qualifiers.toSeq:_*).scan().toSet
-      val expected = cells.filter(cell => qualifiers(cell.qualifier))
+      val expected = cells.filter(cell => qualifiers(OrderedByteable.fromBytesAsc[Byte](cell.qualifier)))
       result should equal (expected)
     }
   }
 
   property("HBaseTable can scan all Cells in a table restricted to a qualifier interval.") {
-    forAll { qualifiers: Interval[Qualifier] =>
+    forAll { qualifiers: Interval[Byte] =>
       val result = table.viewColumns(Families(0), IntervalSet(qualifiers)).scan().toSet
-      val expected = cells.filter(cell => qualifiers(cell.qualifier))
+      val expected = cells.filter(cell => qualifiers(OrderedByteable.fromBytesAsc[Byte](cell.qualifier)))
       result should equal (expected)
     }
   }
 
   property("HBaseTable can scan all Cells in a table restricted to a qualifier interval set.") {
-    forAll { qualifiers: IntervalSet[Qualifier] =>
+    forAll { qualifiers: IntervalSet[Byte] =>
       val result = table.viewColumns(Families(0), qualifiers).scan().toSet
-      val expected = cells.filter(cell => qualifiers(Interval.point(cell.qualifier)))
+      val expected = cells.filter(cell => qualifiers(Interval(OrderedByteable.fromBytesAsc[Byte](cell.qualifier))))
       result should equal (expected)
     }
   }
@@ -152,9 +155,11 @@ class HBaseTableIntegrationSpec
   }
 
   property("An HBaseTable view can be restricted by a rows interval set and a columns interval set.") {
-    forAll { (rows: IntervalSet[Byte], qualifiers: IntervalSet[Qualifier]) =>
+    forAll { (rows: IntervalSet[Byte], qualifiers: IntervalSet[Byte]) =>
       val result = table.viewRows(rows).viewColumns(Families(0), qualifiers).scan().toSet
-      val expected = cells.filter(cell => rows.containsPoint(cell.rowkey) && qualifiers.containsPoint(cell.qualifier))
+      val expected = cells.filter(cell =>
+        rows.containsPoint(OrderedByteable.fromBytesAsc[Byte](cell.rowkey)) &&
+          qualifiers.containsPoint(OrderedByteable.fromBytesAsc[Byte](cell.qualifier)))
       result should equal (expected)
     }
   }
@@ -162,7 +167,7 @@ class HBaseTableIntegrationSpec
   property("An HBaseTable view can be restricted by a rows interval set and a versions interval.") {
     forAll { (rows: IntervalSet[Byte], versions: Interval[Long]) =>
       val result = table.viewRows(rows).viewVersions(versions).scan().toSet
-      val expected = cells.filter(cell => rows.containsPoint(cell.rowkey) && versions(cell.version))
+      val expected = cells.filter(cell => rows.containsPoint(OrderedByteable.fromBytesAsc[Byte](cell.rowkey)) && versions(cell.version))
       result should equal (expected)
     }
   }
@@ -170,39 +175,55 @@ class HBaseTableIntegrationSpec
   property("An HBaseTable view can be restricted by a rows interval set and versions.") {
     forAll { (rows: IntervalSet[Byte], versions: Set[Long]) =>
       val result = table.viewRows(rows).viewVersions(versions.toSeq:_*).scan().toSet
-      val expected = cells.filter(cell => rows.containsPoint(cell.rowkey) && versions(cell.version))
+      val expected = cells.filter { cell =>
+        rows.containsPoint(OrderedByteable.fromBytesAsc[Byte](cell.rowkey)) &&
+        versions(cell.version)
+      }
       result should equal (expected)
     }
   }
 
   property("An HBaseTable view can be restricted by a qualifier interval set and a versions interval.") {
-    forAll { (qualifiers: IntervalSet[Qualifier], versions: Interval[Long]) =>
+    forAll { (qualifiers: IntervalSet[Byte], versions: Interval[Long]) =>
       val result = table.viewColumns(Families(0), qualifiers).viewVersions(versions).scan().toSet
-      val expected = cells.filter(cell => qualifiers.containsPoint(cell.qualifier) && versions(cell.version))
+      val expected = cells.filter { cell =>
+        qualifiers.containsPoint(OrderedByteable.fromBytesAsc[Byte](cell.qualifier)) &&
+        versions(cell.version)
+      }
       result should equal (expected)
     }
   }
 
   property("An HBaseTable view can be restricted by a qualifier interval set and versions.") {
-    forAll { (qualifiers: IntervalSet[Qualifier], versions: Set[Long]) =>
+    forAll { (qualifiers: IntervalSet[Byte], versions: Set[Long]) =>
       val result = table.viewColumns(Families(0), qualifiers).viewVersions(versions.toSeq:_*).scan().toSet
-      val expected = cells.filter(cell => qualifiers.containsPoint(cell.qualifier) && versions(cell.version))
+      val expected = cells.filter { cell =>
+        qualifiers.containsPoint(OrderedByteable.fromBytesAsc[Byte](cell.qualifier)) &&
+          versions(cell.version)
+      }
       result should equal (expected)
     }
   }
 
   property("An HBaseTable view can be restricted by rowkey, qualifier, and version interval.") {
-    forAll { (rows: IntervalSet[Byte], qualifiers: IntervalSet[Qualifier], versions: Interval[Long]) =>
+    forAll { (rows: IntervalSet[Byte], qualifiers: IntervalSet[Byte], versions: Interval[Long]) =>
       val result = table.viewRows(rows).viewColumns(Families(0), qualifiers).viewVersions(versions).scan().toSet
-      val expected = cells.filter(cell => rows.containsPoint(cell.rowkey) && qualifiers.containsPoint(cell.qualifier) && versions(cell.version))
+      val expected = cells.filter { cell =>
+        rows.containsPoint(OrderedByteable.fromBytesAsc[Byte](cell.rowkey)) &&
+        qualifiers.containsPoint(OrderedByteable.fromBytesAsc[Byte](cell.qualifier)) &&
+        versions(cell.version)
+      }
       result should equal (expected)
     }
   }
 
   property("An HBaseTable view can be restricted by rowkey, qualifier, and versions.") {
-    forAll { (rows: IntervalSet[Byte], qualifiers: IntervalSet[Qualifier], versions: Set[Long]) =>
+    forAll { (rows: IntervalSet[Byte], qualifiers: IntervalSet[Byte], versions: Set[Long]) =>
       val result = table.viewRows(rows).viewColumns(Families(0), qualifiers).viewVersions(versions.toSeq:_*).scan().toSet
-      val expected = cells.filter(cell => rows.containsPoint(cell.rowkey) && qualifiers.containsPoint(cell.qualifier) && versions(cell.version))
+      val expected = cells.filter(cell =>
+        rows.containsPoint(OrderedByteable.fromBytesAsc[Byte](cell.rowkey)) &&
+          qualifiers.containsPoint(OrderedByteable.fromBytesAsc[Byte](cell.qualifier)) &&
+          versions(cell.version))
       result should equal (expected)
     }
   }

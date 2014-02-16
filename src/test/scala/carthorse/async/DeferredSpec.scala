@@ -189,7 +189,7 @@ class DeferredSpec extends WordSpec with Matchers {
         val suaDef = new sua.Deferred[Int]
         Future { Thread.sleep(1000); suaDef.callback(123) }
         val deferred = new Deferred(suaDef)
-        intercept[TimeoutException] { deferred.result(100 millis) }
+        intercept[TimeoutException] { deferred.result(100.millis) }
       }
     }
   }
