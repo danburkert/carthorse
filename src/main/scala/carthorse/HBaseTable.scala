@@ -43,7 +43,7 @@ import carthorse.async.Deferred
  * @param maxBytes a performance tuning parameter which limits the maximum number of bytes fetched
  *        by the client in a single RPC request.  HBase 0.96+, ignored for earlier versions.
  */
-case class HBaseTable[R <% Ordered[R] : OrderedByteable](
+case class HBaseTable[R <% Ordered[R]](
     client: HBaseClient,
     name: String,
     rows: IntervalSet[Array[Byte]] = IntervalSet(Interval.all[Array[Byte]]),
@@ -53,7 +53,9 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
     maxCells: Option[Int] = None,
     maxRows: Option[Int] = None,
     maxBytes: Option[Long] = None,
-    populateBlockCache: Boolean = true
+    populateBlockCache: Boolean = true,
+    encodeRowkey: R => Array[Byte],
+    decodeRowkey: Array[Byte] => R
 ) {
 
   type Table = HBaseTable[R]
@@ -65,7 +67,7 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
   def viewRows(rows: Interval[R]): Table = viewRows(IntervalSet(rows))
 
   def viewRows(rows: IntervalSet[R]): Table =
-    viewRowsRaw(rows.map(i => i.map(OrderedByteable.toBytesAsc[R])))
+    viewRowsRaw(rows.map(i => i.map(encodeRowkey)))
 
   def viewRowsRaw(rows: IntervalSet[Array[Byte]]): Table =
     copy(rows = this.rows.intersect(rows))
@@ -230,12 +232,12 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
       case (family: String, qualifiers: IntervalSet[Array[Byte]]) => {
         // If all qualifiers in the family are specified as points we can scan just the
         // requested qualifiers.  Otherwise, we rely on filters to exclude unwanted qualifiers.
-        val fam: Array[Byte] = family.getBytes(Charset)
+        val familyBytes: Array[Byte] = family.getBytes(Charset)
         // asynchbase uses null as an indicator to scan all qualifiers in the column family
-        val quals: Array[Array[Byte]] =
+        val qualifiersBytes: Array[Array[Byte]] =
           if (qualifiers.forall(_.isPoint)) qualifiers.map(_.point.get).toArray
           else null
-        fam -> quals
+        familyBytes -> qualifiersBytes
       }
     }.toSeq.unzip
     // sanity checking
@@ -262,10 +264,11 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
     Some(scanner)
   }
 
-  class ScanIterator(scanner: Scanner) extends Iterator[Cell] with Closeable {
+  class ScanIterator(scanner: Scanner) extends Iterator[Cell[R]] with Closeable {
     private var nextBatch: Deferred[ju.ArrayList[ju.ArrayList[KeyValue]]] = scanner.nextRows()
     private var currentBatch: Iterator[KeyValue] = Iterator()
     private var finished: Boolean = false
+    private val createCell: KeyValue => Cell[R] = Cell(decodeRowkey)
 
     /** Load the next batch into `current`, and request a new batch for `next`. */
     private def requestBatch(): Unit = {
@@ -288,20 +291,25 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
     }
 
     def close(): Unit = scanner.close().join()
-    def next(): Cell = Cell(currentBatch.next())
+    def next(): Cell[R] = createCell(currentBatch.next())
   }
 
-  object EmptyScanIterator extends Iterator[Cell] with Closeable {
+  object EmptyScanIterator extends Iterator[Cell[R]] with Closeable {
     def hasNext: Boolean = false
-    def next(): Cell = null
+    def next(): Cell[R] = null
     def close(): Unit = {}
   }
 
-  def scan(): Iterator[Cell] with Closeable =
+  def scan(): Iterator[Cell[R]] with Closeable =
     createScanner().map(new ScanIterator(_)).getOrElse(EmptyScanIterator)
 }
 
 object HBaseTable {
   def apply[R <% Ordered[R] : OrderedByteable](client: HBaseClient, name: String, families: Iterable[String]): HBaseTable[R] =
-    HBaseTable(client, name, columns = families.map(_ -> IntervalSet(Interval.all[Array[Byte]])).toMap)
+    HBaseTable(
+      client,
+      name,
+      columns = families.map(_ -> IntervalSet(Interval.all[Array[Byte]])).toMap,
+      encodeRowkey = OrderedByteable.toBytesAsc[R],
+      decodeRowkey = OrderedByteable.fromBytesAsc[R])
 }
