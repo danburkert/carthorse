@@ -2,8 +2,9 @@ package carthorse.async
 
 import java.{util => ju}
 
-import scala.util.{Failure, Success, Try}
 import scala.collection.JavaConverters._
+import scala.language.implicitConversions
+import scala.util.{Failure, Success, Try}
 
 import com.stumbleupon.async.Callback
 import com.stumbleupon.{async => sua}
@@ -194,8 +195,7 @@ class Deferred[T](private val repr: sua.Deferred[T]) {
       List(this.repr.asInstanceOf[sua.Deferred[Any]], that.repr.asInstanceOf[sua.Deferred[Any]])
     sua.Deferred
       .groupInOrder(ds.asJavaCollection)
-      .addCallback((xs: ju.ArrayList[Any]) =>
-        xs.asScala.toList match { case (t: T) :: (u: U) :: Nil => t -> u })
+      .addCallback((xs: ju.ArrayList[Any]) => xs.get(0).asInstanceOf[T] -> xs.get(1).asInstanceOf[U])
   }
 
   /**
@@ -262,7 +262,8 @@ object Deferred {
 
   def apply[T](t: Try[T]): Deferred[T] = t match {
     case Success(value) => sua.Deferred.fromResult(value)
-    case Failure(error: Exception) => sua.Deferred.fromError[T](error)
+    case Failure(exception: Exception) => sua.Deferred.fromError[T](exception)
+    case Failure(error) => throw new IllegalArgumentException("Cannot create a Deferred from an error.")
   }
 
   /**

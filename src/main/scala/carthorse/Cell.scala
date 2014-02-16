@@ -2,22 +2,23 @@ package carthorse
 
 import java.{util => ju}
 
+import com.google.common.primitives.UnsignedBytes
 import org.hbase.async.KeyValue
 
-final case class Cell[R <% Ordered[R] : OrderedByteable](
-    rowkey: R,
+final case class Cell(
+    rowkey: Array[Byte],
     family: String,
-    qualifier: Qualifier,
+    qualifier: Array[Byte],
     version: Long,
     value: Array[Byte])
-  extends Ordered[Cell[R]] {
+  extends Ordered[Cell] {
 
   override def equals(any: Any): Boolean = any match {
     case other@Cell(otherRowkey, otherFamily, otherQualifier, otherVersion, otherValue) =>
       (this eq other) ||
-        (implicitly[OrderedByteable[R]].equals(rowkey, otherRowkey)
+        (ju.Arrays.equals(rowkey, otherRowkey)
           && family == otherFamily
-          && Identifier.equals(qualifier, otherQualifier)
+          && ju.Arrays.equals(qualifier, otherQualifier)
           && version == otherVersion
           && ju.Arrays.equals(value, otherValue))
     case _ => false
@@ -28,18 +29,18 @@ final case class Cell[R <% Ordered[R] : OrderedByteable](
       41 * (
         41 * (
           41 * (
-            41 + implicitly[OrderedByteable[R]].hashCode(rowkey)
+            41 + ju.Arrays.hashCode(rowkey)
           ) + family.hashCode
-        ) + Identifier.hashCode(qualifier)
+        ) + ju.Arrays.hashCode(qualifier)
       ) + version.hashCode
     ) + ju.Arrays.hashCode(value)
 
-  def compare(other: Cell[R]): Int = {
-    val rowkey = this.rowkey compare other.rowkey
+  def compare(other: Cell): Int = {
+    val rowkey = UnsignedBytes.lexicographicalComparator().compare(this.rowkey, other.rowkey)
     if (rowkey != 0) return rowkey
     val family = this.family compare other.family
     if (family != 0) return family
-    val qualifier = Identifier.compare(this.qualifier, other.qualifier)
+    val qualifier = UnsignedBytes.lexicographicalComparator().compare(this.qualifier, other.qualifier)
     if (qualifier != 0) return qualifier
     val version = this.version compare other.version
     if (version != 0) return version
@@ -48,6 +49,7 @@ final case class Cell[R <% Ordered[R] : OrderedByteable](
 }
 
 object Cell {
-  def apply[R <% Ordered[R] : OrderedByteable](kv: KeyValue): Cell[R] =
-    new Cell(OrderedByteable.fromBytesAsc(kv.key), new String(kv.family, Charset), kv.qualifier, kv.timestamp, kv.value)
+  def apply(kv: KeyValue): Cell =
+    // TODO: share family String instances
+    new Cell(kv.key, new String(kv.family, Charset), kv.qualifier, kv.timestamp, kv.value)
 }

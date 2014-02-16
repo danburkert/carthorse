@@ -47,7 +47,7 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
     client: HBaseClient,
     name: String,
     rows: IntervalSet[Array[Byte]] = IntervalSet(Interval.all[Array[Byte]]),
-    columns: Map[String, IntervalSet[Qualifier]],
+    columns: Map[String, IntervalSet[Array[Byte]]],
     versions: IntervalSet[Long] = IntervalSet(Interval.atLeast(0)),
     maxVersions: Option[Int] = None,
     maxCells: Option[Int] = None,
@@ -64,24 +64,38 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
 
   def viewRows(rows: Interval[R]): Table = viewRows(IntervalSet(rows))
 
-  def viewRows(rows: IntervalSet[R]): Table = copy(rows = this.rows.intersect(rows.map(_.map(OrderedByteable.toBytesAsc(_)))))
+  def viewRows(rows: IntervalSet[R]): Table =
+    viewRowsRaw(rows.map(i => i.map(OrderedByteable.toBytesAsc[R])))
+
+  def viewRowsRaw(rows: IntervalSet[Array[Byte]]): Table =
+    copy(rows = this.rows.intersect(rows))
 
   def viewFamily(family: String): Table = viewFamilies(family)
 
   def viewFamilies(family: String*): Table = copy(columns = columns filterKeys family.toSet)
 
-  def viewColumn(family: String, qualifier: Qualifier): Table = viewColumns(family, qualifier)
+  def viewColumn[Q <% Ordered[Q] : OrderedByteable](family: String, qualifier: Q): Table =
+    viewColumns(family, qualifier)
 
-  def viewColumns(family: String, qualifiers: Qualifier*): Table =
+  def viewColumns[Q <% Ordered[Q] : OrderedByteable](family: String, qualifiers: Q*): Table =
     viewColumns(family, IntervalSet(qualifiers.map(Interval(_)):_*))
 
-  def viewColumns(family: String, qualifiers: IntervalSet[Qualifier]): Table =
+  def viewColumns[Q : OrderedByteable](family: String, qualifiers: IntervalSet[Q]): Table =
     viewColumns(Map(family -> qualifiers))
 
-  def viewColumns(columns: Map[String, IntervalSet[Qualifier]]): Table = {
-    val mergedColumns = for ((family, qualifiers) <- columns)
-      yield (family, this.columns.get(family).fold(qualifiers)((t: IntervalSet[Qualifier]) => t.intersect(qualifiers)))
-    copy(columns = mergedColumns.filter{ case (family, qualifiers) => qualifiers.nonEmpty })
+  def viewColumns[Q : OrderedByteable](columns: Map[String, IntervalSet[Q]]): Table = {
+    val rawColumns = columns.mapValues(is => is.map(i => i.map(OrderedByteable.toBytesAsc[Q])))
+    viewColumnsRaw(rawColumns)
+  }
+
+  def viewColumnsRaw(rawColumns: Map[String, IntervalSet[Array[Byte]]]): Table = {
+    val mergedColumns: Map[String, IntervalSet[Array[Byte]]] = for {
+      (family, additional) <- rawColumns
+      existing <- this.columns.get(family)
+      intersection = existing.intersect(additional)
+      if intersection.nonEmpty
+    } yield (family, intersection)
+    copy(columns = mergedColumns)
   }
 
   def viewVersion(version: Long): Table = viewVersions(version)
@@ -141,19 +155,19 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
    */
   private lazy val columnsFilter: Option[ScanFilter] = {
     /** Returns a filter which filters any cell not in the specified family and qualifiers. */
-    def familyFilter(family: String, qualifiers: IntervalSet[Qualifier]): Option[ScanFilter] = {
+    def familyFilter(family: String, qualifiers: IntervalSet[Array[Byte]]): Option[ScanFilter] = {
       if (qualifiers.forall(_.isPoint)) return None
-      if (qualifiers.contains(Interval.atLeast(Identifier.minimum))) return None
+      if (qualifiers.contains(Interval.atLeast(Array[Byte]()))) return None
 
       val qualifierFilters: Seq[ScanFilter] = qualifiers.toSeq.map { interval =>
         val (startKey, startInclusive) = interval.lower.bound match {
-          case Closed(l) => l.bytes -> true
-          case Open(l) => l.bytes -> false
+          case Closed(l) => l -> true
+          case Open(l) => l -> false
           case Unbounded() => (null: Array[Byte]) -> true
         }
         val (endKey, endInclusive) = interval.upper.bound match {
-          case Closed(u) => u.bytes -> true
-          case Open(u) => u.bytes -> false
+          case Closed(u) => u -> true
+          case Open(u) => u -> false
           case Unbounded() => (null: Array[Byte]) -> true
         }
         new ColumnRangeFilter(startKey, startInclusive, endKey, endInclusive)
@@ -199,7 +213,7 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
    * Return a scanner over the table view, or None if it can be determined that the Scanner would
    * contain no results.
    */
-  private def getScanner(): Option[Scanner] = {
+  private def createScanner(): Option[Scanner] = {
     val scanner = client.newScanner(name)
 
     // set start and stop rowkey
@@ -213,13 +227,13 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
 
     // set columns
     val (families, qualifiers): (Seq[Array[Byte]], Seq[Array[Array[Byte]]]) = columns.map {
-      case (family: String, qualifiers: IntervalSet[Qualifier]) => {
+      case (family: String, qualifiers: IntervalSet[Array[Byte]]) => {
         // If all qualifiers in the family are specified as points we can scan just the
         // requested qualifiers.  Otherwise, we rely on filters to exclude unwanted qualifiers.
         val fam: Array[Byte] = family.getBytes(Charset)
         // asynchbase uses null as an indicator to scan all qualifiers in the column family
         val quals: Array[Array[Byte]] =
-          if (qualifiers.forall(_.isPoint)) qualifiers.map(_.point.get.bytes).toArray
+          if (qualifiers.forall(_.isPoint)) qualifiers.map(_.point.get).toArray
           else null
         fam -> quals
       }
@@ -248,7 +262,7 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
     Some(scanner)
   }
 
-  class ScanIterator(scanner: Scanner) extends Iterator[Cell[R]] with Closeable {
+  class ScanIterator(scanner: Scanner) extends Iterator[Cell] with Closeable {
     private var nextBatch: Deferred[ju.ArrayList[ju.ArrayList[KeyValue]]] = scanner.nextRows()
     private var currentBatch: Iterator[KeyValue] = Iterator()
     private var finished: Boolean = false
@@ -274,20 +288,20 @@ case class HBaseTable[R <% Ordered[R] : OrderedByteable](
     }
 
     def close(): Unit = scanner.close().join()
-    def next(): Cell[R] = Cell[R](currentBatch.next())
+    def next(): Cell = Cell(currentBatch.next())
   }
 
-  object EmptyScanIterator extends Iterator[Cell[R]] with Closeable {
+  object EmptyScanIterator extends Iterator[Cell] with Closeable {
     def hasNext: Boolean = false
-    def next(): Cell[R] = null
+    def next(): Cell = null
     def close(): Unit = {}
   }
 
-  def scan(): Iterator[Cell[R]] with Closeable =
-    getScanner().map(new ScanIterator(_)).getOrElse(EmptyScanIterator)
+  def scan(): Iterator[Cell] with Closeable =
+    createScanner().map(new ScanIterator(_)).getOrElse(EmptyScanIterator)
 }
 
 object HBaseTable {
   def apply[R <% Ordered[R] : OrderedByteable](client: HBaseClient, name: String, families: Iterable[String]): HBaseTable[R] =
-    HBaseTable(client, name, columns = families.map(_ -> IntervalSet(Interval.all[Qualifier])).toMap)
+    HBaseTable(client, name, columns = families.map(_ -> IntervalSet(Interval.all[Array[Byte]])).toMap)
 }

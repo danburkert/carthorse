@@ -6,6 +6,8 @@ version := "0.1"
 
 scalaVersion := "2.10.3"
 
+scalacOptions += "-feature"
+
 resolvers += Resolver.sonatypeRepo("snapshots")
 
 resolvers += "Local Maven Repository" at "file://"+Path.userHome.absolutePath+"/.m2/repository"
