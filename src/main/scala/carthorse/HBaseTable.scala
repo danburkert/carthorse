@@ -43,7 +43,7 @@ import carthorse.async.Deferred
  * @param maxBytes a performance tuning parameter which limits the maximum number of bytes fetched
  *        by the client in a single RPC request.  HBase 0.96+, ignored for earlier versions.
  */
-case class HBaseTable[R <% Ordered[R]](
+case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q]](
     client: HBaseClient,
     name: String,
     rows: IntervalSet[Array[Byte]] = IntervalSet(Interval.all[Array[Byte]]),
@@ -55,10 +55,12 @@ case class HBaseTable[R <% Ordered[R]](
     maxBytes: Option[Long] = None,
     populateBlockCache: Boolean = true,
     encodeRowkey: R => Array[Byte],
-    decodeRowkey: Array[Byte] => R
+    decodeRowkey: Array[Byte] => R,
+    encodeQualifier: Q => Array[Byte],
+    decodeQualifier: Array[Byte] => Q
 ) {
 
-  type Table = HBaseTable[R]
+  type Table = HBaseTable[R, Q]
 
   def viewRow(row: R): Table = viewRows(row)
 
@@ -76,17 +78,17 @@ case class HBaseTable[R <% Ordered[R]](
 
   def viewFamilies(family: String*): Table = copy(columns = columns filterKeys family.toSet)
 
-  def viewColumn[Q <% Ordered[Q] : OrderedByteable](family: String, qualifier: Q): Table =
+  def viewColumn(family: String, qualifier: Q): Table =
     viewColumns(family, qualifier)
 
-  def viewColumns[Q <% Ordered[Q] : OrderedByteable](family: String, qualifiers: Q*): Table =
+  def viewColumns(family: String, qualifiers: Q*): Table =
     viewColumns(family, IntervalSet(qualifiers.map(Interval(_)):_*))
 
-  def viewColumns[Q : OrderedByteable](family: String, qualifiers: IntervalSet[Q]): Table =
+  def viewColumns(family: String, qualifiers: IntervalSet[Q]): Table =
     viewColumns(Map(family -> qualifiers))
 
-  def viewColumns[Q : OrderedByteable](columns: Map[String, IntervalSet[Q]]): Table = {
-    val rawColumns = columns.mapValues(is => is.map(i => i.map(OrderedByteable.toBytesAsc[Q])))
+  def viewColumns(columns: Map[String, IntervalSet[Q]]): Table = {
+    val rawColumns = columns.mapValues(qs => qs.map(q => q.map(encodeQualifier))
     viewColumnsRaw(rawColumns)
   }
 
@@ -264,11 +266,11 @@ case class HBaseTable[R <% Ordered[R]](
     Some(scanner)
   }
 
-  class ScanIterator(scanner: Scanner) extends Iterator[Cell[R]] with Closeable {
+  class ScanIterator(scanner: Scanner) extends Iterator[Cell[R, Q]] with Closeable {
     private var nextBatch: Deferred[ju.ArrayList[ju.ArrayList[KeyValue]]] = scanner.nextRows()
     private var currentBatch: Iterator[KeyValue] = Iterator()
     private var finished: Boolean = false
-    private val createCell: KeyValue => Cell[R] = Cell(decodeRowkey)
+    private val createCell: KeyValue => Cell[R, Q] = Cell(decodeRowkey, decodeQualifier)
 
     /** Load the next batch into `current`, and request a new batch for `next`. */
     private def requestBatch(): Unit = {
@@ -291,25 +293,28 @@ case class HBaseTable[R <% Ordered[R]](
     }
 
     def close(): Unit = scanner.close().join()
-    def next(): Cell[R] = createCell(currentBatch.next())
+    def next(): Cell[R, Q] = createCell(currentBatch.next())
   }
 
-  object EmptyScanIterator extends Iterator[Cell[R]] with Closeable {
+  object EmptyScanIterator extends Iterator[Cell[R, Q]] with Closeable {
     def hasNext: Boolean = false
-    def next(): Cell[R] = null
+    def next(): Cell[R, Q] = null
     def close(): Unit = {}
   }
 
-  def scan(): Iterator[Cell[R]] with Closeable =
+  def scan(): Iterator[Cell[R, Q]] with Closeable =
     createScanner().map(new ScanIterator(_)).getOrElse(EmptyScanIterator)
 }
 
 object HBaseTable {
-  def apply[R <% Ordered[R] : OrderedByteable](client: HBaseClient, name: String, families: Iterable[String]): HBaseTable[R] =
+  def apply[R <% Ordered[R] : OrderedByteable, Q <% Ordered[Q] : OrderedByteable]
+  (client: HBaseClient, name: String, families: Iterable[String]): HBaseTable[R, Q] =
     HBaseTable(
       client,
       name,
       columns = families.map(_ -> IntervalSet(Interval.all[Array[Byte]])).toMap,
       encodeRowkey = OrderedByteable.toBytesAsc[R],
-      decodeRowkey = OrderedByteable.fromBytesAsc[R])
+      decodeRowkey = OrderedByteable.fromBytesAsc[R],
+      encodeQualifier = OrderedByteable.toBytesAsc[Q],
+      decodeQualifier = OrderedByteable.fromBytesAsc[Q])
 }

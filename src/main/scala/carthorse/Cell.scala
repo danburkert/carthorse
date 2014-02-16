@@ -2,23 +2,21 @@ package carthorse
 
 import java.{util => ju}
 
-import com.google.common.primitives.UnsignedBytes
 import org.hbase.async.KeyValue
 
-final case class Cell[R <% Ordered[R]](
+final case class Cell[R <% Ordered[R], Q <% Ordered[Q]](
     rowkey: R,
     family: String,
-    qualifier: Array[Byte],
+    qualifier: Q,
     version: Long,
     value: Array[Byte])
-  extends Ordered[Cell[R]] {
+  extends Ordered[Cell[R, Q]] {
 
   override def equals(any: Any): Boolean = any match {
     case other@Cell(otherRowkey, otherFamily, otherQualifier, otherVersion, otherValue) =>
-      (this eq other) ||
-        (rowkey.compareTo(otherRowkey.asInstanceOf[R]) == 0
+      (this eq other) || (Cell.equals(rowkey, otherRowkey)
           && family == otherFamily
-          && ju.Arrays.equals(qualifier, otherQualifier)
+          && Cell.equals(qualifier, otherQualifier)
           && version == otherVersion
           && ju.Arrays.equals(value, otherValue))
     case _ => false
@@ -31,16 +29,16 @@ final case class Cell[R <% Ordered[R]](
           41 * (
             41 + Cell.hashCode(rowkey)
           ) + family.hashCode
-        ) + ju.Arrays.hashCode(qualifier)
+        ) + Cell.hashCode(qualifier)
       ) + version.hashCode
     ) + ju.Arrays.hashCode(value)
 
-  def compare(other: Cell[R]): Int = {
+  def compare(other: Cell[R, Q]): Int = {
     val rowkey = this.rowkey.compare(other.rowkey)
     if (rowkey != 0) return rowkey
     val family = this.family compare other.family
     if (family != 0) return family
-    val qualifier = UnsignedBytes.lexicographicalComparator().compare(this.qualifier, other.qualifier)
+    val qualifier = this.qualifier.compare(other.qualifier)
     if (qualifier != 0) return qualifier
     val version = this.version compare other.version
     if (version != 0) return version
@@ -68,8 +66,10 @@ object Cell {
     case _ => a.hashCode()
   }
 
-  def apply[R <% Ordered[R]](decodeRowkey: Array[Byte] => R)(kv: KeyValue): Cell[R] = {
+  def apply[R <% Ordered[R], Q <% Ordered[Q]]
+  (decodeRowkey: Array[Byte] => R, decodeQualifier: Array[Byte] => Q)
+  (kv: KeyValue): Cell[R, Q] = {
     // TODO: share family String instances
-    new Cell(decodeRowkey(kv.key), new String(kv.family, Charset), kv.qualifier, kv.timestamp, kv.value)
+    new Cell(decodeRowkey(kv.key), new String(kv.family, Charset), decodeQualifier(kv.qualifier), kv.timestamp, kv.value)
   }
 }
