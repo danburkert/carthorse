@@ -1,0 +1,1 @@
+echo "disable 'carthorse.test'; drop 'carthorse.test'" | hbase shell 2> /dev/null

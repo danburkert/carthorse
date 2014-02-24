@@ -1,8 +1,7 @@
 package carthorse
 
-import org.hbase.async.HBaseClient
-
 import carthorse.async.Deferred
+import org.hbase.async.HBaseClient
 
 class HBase(quorum: Seq[String] = Seq("localhost:2181"), basePath: String = "/hbase") {
 
@@ -10,7 +9,8 @@ class HBase(quorum: Seq[String] = Seq("localhost:2181"), basePath: String = "/hb
 
   def ensureTableExists(name: String): Deferred[_] = client.ensureTableExists(name)
 
-  def openTable[R <% Ordered[R] : OrderedByteable](name: String, families: String*): HBaseTable[R] =
+  def openTable[R <% Ordered[R] : OrderedByteable, Q <% Ordered[Q] : OrderedByteable, V <% Ordered[V] : Byteable]
+  (name: String, families: String*): HBaseTable[R, Q, String] =
     HBaseTable(client, name, families = families)
 
   def close(): Deferred[_] = client.shutdown()

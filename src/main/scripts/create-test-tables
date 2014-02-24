@@ -1,0 +1,1 @@
+echo "create 'carthorse.test', 'scan', 'put'" | hbase shell 2> /dev/null

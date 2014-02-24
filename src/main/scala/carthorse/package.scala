@@ -1,5 +1,7 @@
 import com.google.common.primitives.UnsignedBytes
 
+import scala.language.implicitConversions
+
 package object carthorse {
 
   val Charset = java.nio.charset.Charset.forName("UTF-8")

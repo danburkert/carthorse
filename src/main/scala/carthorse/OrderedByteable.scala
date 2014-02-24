@@ -17,8 +17,6 @@ trait OrderedByteable[T] {
 
 object OrderedByteable {
 
-  def apply[T](implicit ob: OrderedByteable[T]): OrderedByteable[T] = ob
-
   def toBytesAsc[T](value: T)(implicit ev: OrderedByteable[T]): Array[Byte] = {
     import ev._
     val bytes = new SimplePositionedByteRange(ascDataType.encodedLength(value))

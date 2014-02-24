@@ -15,9 +15,9 @@ import org.scalatest.{Matchers, WordSpec}
 class DeferredSpec extends WordSpec with Matchers {
 
   "A sua.Deferred" can {
-    "be implicitly converted to a Deferred" in {
-      Deferred.successful(123): sua.Deferred[Int]
-      Deferred.failed[Int](new RuntimeException): sua.Deferred[Int]
+    "be explicitly converted to a Deferred" in {
+      Deferred.ch2su(Deferred.successful(123)): sua.Deferred[Int]
+      Deferred.ch2su[Int](Deferred.failed[Int](new RuntimeException)): sua.Deferred[Int]
     }
   }
 

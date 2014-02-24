@@ -1,7 +1,5 @@
 package carthorse
 
-import java.{util => ju}
-
 import org.scalatest.FunSuite
 
 class CellSuite extends FunSuite {

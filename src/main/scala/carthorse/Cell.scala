@@ -4,21 +4,21 @@ import java.{util => ju}
 
 import org.hbase.async.KeyValue
 
-final case class Cell[R <% Ordered[R], Q <% Ordered[Q]](
+final case class Cell[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
     rowkey: R,
     family: String,
     qualifier: Q,
     version: Long,
-    value: Array[Byte])
-  extends Ordered[Cell[R, Q]] {
+    value: V)
+  extends Ordered[Cell[R, Q, V]] {
 
   override def equals(any: Any): Boolean = any match {
-    case other@Cell(otherRowkey, otherFamily, otherQualifier, otherVersion, otherValue) =>
-      (this eq other) || (Cell.equals(rowkey, otherRowkey)
-          && family == otherFamily
-          && Cell.equals(qualifier, otherQualifier)
-          && version == otherVersion
-          && ju.Arrays.equals(value, otherValue))
+    case other : Cell[_, _, _] =>
+      (this eq other) || (Cell.equals(rowkey, other.rowkey)
+          && family == other.family
+          && Cell.equals(qualifier, other.qualifier)
+          && version == other.version
+          && Cell.equals(value, other.value))
     case _ => false
   }
 
@@ -31,9 +31,9 @@ final case class Cell[R <% Ordered[R], Q <% Ordered[Q]](
           ) + family.hashCode
         ) + Cell.hashCode(qualifier)
       ) + version.hashCode
-    ) + ju.Arrays.hashCode(value)
+    ) + Cell.hashCode(value)
 
-  def compare(other: Cell[R, Q]): Int = {
+  override def compare(other: Cell[R, Q, V]): Int = {
     val rowkey = this.rowkey.compare(other.rowkey)
     if (rowkey != 0) return rowkey
     val family = this.family compare other.family
@@ -42,7 +42,7 @@ final case class Cell[R <% Ordered[R], Q <% Ordered[Q]](
     if (qualifier != 0) return qualifier
     val version = this.version compare other.version
     if (version != 0) return version
-    this.value compare other.value
+    implicitly[Ordering[V]].compare(this.value, other.value)
   }
 }
 
@@ -66,10 +66,33 @@ object Cell {
     case _ => a.hashCode()
   }
 
-  def apply[R <% Ordered[R], Q <% Ordered[Q]]
-  (decodeRowkey: Array[Byte] => R, decodeQualifier: Array[Byte] => Q)
-  (kv: KeyValue): Cell[R, Q] = {
+  /**
+   * Create a Cell[R, Q, V] with the latest timestamp.
+   */
+  def apply[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](rowkey: R, family: String, qualifier: Q, value: V): Cell[R, Q, V] =
+    Cell(rowkey, family, qualifier, KeyValue.TIMESTAMP_NOW, value)
+
+  /**
+   * Create a Cell[R, Q, V] from a KeyValue.
+   */
+  def apply[R <% Ordered[R], Q <% Ordered[Q], V : Ordering]
+  (decodeRowkey: Array[Byte] => R, decodeQualifier: Array[Byte] => Q, decodeValue: Array[Byte] => V)
+  (kv: KeyValue): Cell[R, Q, V] = {
     // TODO: share family String instances
-    new Cell(decodeRowkey(kv.key), new String(kv.family, Charset), decodeQualifier(kv.qualifier), kv.timestamp, kv.value)
+    new Cell(decodeRowkey(kv.key), new String(kv.family, Charset), decodeQualifier(kv.qualifier), kv.timestamp, decodeValue(kv.value))
   }
+
+  /**
+   * Create a KeyValue from a Cell[R, Q, V].
+   */
+  def apply[R, Q, V]
+  (encodeRowKey: R => Array[Byte], encodeQualifier: Q => Array[Byte], encodeValue: V => Array[Byte])
+  (cell: Cell[R, Q, V]): KeyValue =
+    // TODO: share family byte array instances
+    new KeyValue(
+      encodeRowKey(cell.rowkey),
+      cell.family.getBytes(Charset),
+      encodeQualifier(cell.qualifier),
+      cell.version,
+      encodeValue(cell.value))
 }

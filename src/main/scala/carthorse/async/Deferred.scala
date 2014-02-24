@@ -208,9 +208,7 @@ class Deferred[T](private val repr: sua.Deferred[T]) {
    */
   @throws(classOf[InterruptedException])
   @throws(classOf[Exception])
-  def result(): T = {
-    repr.join()
-  }
+  def result(): T = repr.join()
 
   /**
    * Synchronously block until the result is available, or until the specified time is elapsed, and
@@ -258,7 +256,7 @@ object Deferred {
   implicit def su2ch[T](repr: sua.Deferred[T]): Deferred[T] = new Deferred[T](repr)
 
   /** Provides an implicit conversion from [[carthorse.async.Deferred]] to [[com.stumbleupon.async.Deferred]]. */
-  implicit def ch2Su[T](deferred: Deferred[T]): sua.Deferred[T] = deferred.repr
+  implicit def ch2su[T](deferred: Deferred[T]): sua.Deferred[T] = deferred.repr
 
   def apply[T](t: Try[T]): Deferred[T] = t match {
     case Success(value) => sua.Deferred.fromResult(value)
