@@ -4,8 +4,10 @@ import java.{lang => jl}
 
 import scala.language.implicitConversions
 
-import org.apache.hadoop.hbase.util.SimplePositionedByteRange
+import org.apache.hadoop.hbase.util.{PositionedByteRange, Order, SimplePositionedByteRange}
 import org.apache.hadoop.hbase.types._
+import java.util.UUID
+import com.google.common.primitives.{UnsignedLongs, UnsignedLong}
 
 trait OrderedByteable[T] {
   type J <: AnyRef // Corresponding type to T in java API
@@ -111,6 +113,43 @@ object OrderedByteable {
     override val descDataType: DataType[J] = OrderedNumeric.DESCENDING
     override def s2j(s: BigDecimal): Number = s.underlying()
     override def j2s(j: Number): BigDecimal = BigDecimal(j.asInstanceOf[java.math.BigDecimal])
+  }
+
+  implicit object UUIDOrderedByteable extends OrderedByteable[UUID] {
+    private class UUIDDataType(longDataType: DataType[jl.Long]) extends DataType[UUID] {
+      override def encode(dst: PositionedByteRange, value: UUID): Int = {
+        longDataType.encode(dst, value.getMostSignificantBits)
+        longDataType.encode(dst, value.getLeastSignificantBits)
+      }
+
+      override def decode(src: PositionedByteRange): UUID =
+        new UUID(longDataType.decode(src), longDataType.decode(src))
+
+      override def skip(src: PositionedByteRange): Int = {
+        longDataType.skip(src)
+        longDataType.skip(src)
+      }
+
+      override def encodedClass(): Class[UUID] = classOf[UUID]
+
+      override def encodedLength(value: UUID): Int =
+        longDataType.encodedLength(value.getMostSignificantBits) +
+          longDataType.encodedLength(value.getLeastSignificantBits)
+
+      override def isSkippable: Boolean = longDataType.isSkippable
+
+      override def isNullable: Boolean = false
+
+      override def getOrder: Order = Order.ASCENDING
+
+      override def isOrderPreserving: Boolean = longDataType.isOrderPreserving
+    }
+
+    type J = UUID
+    override implicit def j2s(j: J): UUID = j
+    override implicit def s2j(s: UUID): J = s
+    override val descDataType: DataType[J] = new UUIDDataType(OrderedInt64.DESCENDING)
+    override val ascDataType: DataType[J] = new UUIDDataType(OrderedInt64.ASCENDING)
   }
 
   implicit def Tuple2OrderedByteable[T1, T2](implicit t1: OrderedByteable[T1], t2: OrderedByteable[T2]): OrderedByteable[(T1, T2)] =

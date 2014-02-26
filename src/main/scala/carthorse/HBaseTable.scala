@@ -15,8 +15,8 @@ import carthorse.async.Deferred._
 
 /**
  * A view of an HBase table. Clients can use an instance of this class to perform scans, gets,
- * and puts against an HBase table. The view of the table may be restricted by rows, columns, and/or
- * versions. The table will not be able to read cells from the table which fall outside this view.
+ * and puts against an HBase table. The view of the table may be restricted by rows and columns.
+ * The table will not be able to read cells from the table which fall outside this view.
  * Further restricted views of the table can be created with the appropriate methods which return
  * an HBaseTable.
  *
@@ -29,10 +29,7 @@ import carthorse.async.Deferred._
  * @param name of the table.
  * @param columns IntervalSet of columns viewable by this table.
  * @param rows IntervalSet of rowkeys viewable by this table.
- * @param versions IntervalSet of versions viewable by this table.
  *
- * @param maxVersions maximum number of versions to return from get and scan requests. Returned
- *        results will be the most recent, up to the maximum number specified.
  * @param maxCells a performance tuning parameter which limits the maximum number of cells fetched
  *        by the client in a single RPC request.
  * @param maxRows a performance tuning parameter which limits the maximum number of rows fetched by
@@ -45,8 +42,6 @@ case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
     name: String,
     rows: IntervalSet[Array[Byte]] = IntervalSet(Interval.all[Array[Byte]]),
     columns: Map[String, IntervalSet[Array[Byte]]],
-    versions: IntervalSet[Long] = IntervalSet(Interval.atLeast(0)),
-    maxVersions: Option[Int] = None,
     maxCells: Option[Int] = None,
     maxRows: Option[Int] = None,
     maxBytes: Option[Long] = None,
@@ -101,16 +96,6 @@ case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
     copy(columns = mergedColumns)
   }
 
-  def viewVersion(version: Long): Table = viewVersions(version)
-
-  def viewVersions(versions: Long*): Table = copy(versions =
-      this.versions intersect IntervalSet(versions.map(Interval(_)):_*))
-
-  def viewVersions(versions: Interval[Long]): Table =
-    copy(versions = this.versions intersect versions)
-
-  def maxVersions(maxVersions: Option[Int]): Table = copy(maxVersions = maxVersions)
-
   def maxCells(maxCells: Option[Int]): Table = copy(maxCells = maxCells)
 
   def maxRows(maxRows: Option[Int]): Table = copy(maxRows = maxRows)
@@ -120,7 +105,7 @@ case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
   def populateBlockCache(populateBlockCache: Boolean): Table =
     copy(populateBlockCache = populateBlockCache)
 
-  def isEmpty: Boolean = rows.isEmpty || columns.isEmpty || versions.isEmpty
+  def isEmpty: Boolean = rows.isEmpty || columns.isEmpty
 
   /**
    * Filter for filtering all cells not in a row contained in the interval set of rows. Not
@@ -196,23 +181,6 @@ case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
   }
 
   /**
-   * Filter for filtering all cells not in the list of versions.
-   */
-  private lazy val versionsFilter: Option[TimestampsFilter] =
-    if (versions.size <= 1) None
-    else {
-      require(versions.forall(_.isPoint))
-      val timestamps: Seq[java.lang.Long] = versions.toSeq.map { interval =>
-        interval.lower.bound match {
-          case Closed(l) => l: java.lang.Long
-          case _         => throw new AssertionError()
-        }
-      }
-      Some(new TimestampsFilter(timestamps:_*))
-    }
-
-
-  /**
    * Return a scanner over the table view, or None if it can be determined that the Scanner would
    * contain no results.
    */
@@ -247,15 +215,11 @@ case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
     if (families.isEmpty) return None
     scanner.setFamilies(families.toArray, qualifiers.toArray)
 
-    // set versions
-    val (minVersion, maxVersion) = versions.span.map(_.normalize).getOrElse(None -> None)
-    // short circuit if no versions
-    if (minVersion.isEmpty && maxVersion.isEmpty) return None
-    minVersion.foreach(v => scanner.setMinTimestamp(v))
-    maxVersion.foreach(v => scanner.setMaxTimestamp(v))
+    // Only read most recent version of each cell
+    scanner.setMaxVersions(1)
 
     // apply filters
-    val filters = List(rowsFilter, columnsFilter, versionsFilter).flatten
+    val filters = List(rowsFilter, columnsFilter).flatten
     filters.size match {
       case 0 =>
       case 1 => scanner.setFilter(filters.head)
@@ -282,7 +246,7 @@ case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
       kvs.toArray
     }
 
-    // sorted by rowkey, then family, then qualifier, then timestamp, then value
+    // sorted by rowkey, then family, then qualifier, then value
     ju.Arrays.sort(keyvalues.asInstanceOf[Array[AnyRef]]) // TODO: figure out why the cast is necessary
 
     var startRI = 0 // start row index. Keeps track of the first index of the current rowkey batch
@@ -309,7 +273,6 @@ case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
 
       val families: Array[Array[Byte]] = Array.ofDim(numFamilies)
       val qualifiers: Array[Array[Array[Byte]]] = Array.ofDim(numFamilies)
-      val timestamps: Array[Array[Long]] = Array.ofDim(numFamilies)
       val values: Array[Array[Array[Byte]]] = Array.ofDim(numFamilies)
 
       familyIs += stopRI // stop index for last family
@@ -320,24 +283,88 @@ case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
 
         families(familyI) = keyvalues(startFI).family()
         qualifiers(familyI) = Array.ofDim[Array[Byte]](numQualifiers)
-        timestamps(familyI) = Array.ofDim[Long](numQualifiers)
         values(familyI) = Array.ofDim[Array[Byte]](numQualifiers)
 
         for (qualifierI <- 0 until numQualifiers) {
           val keyvalue = keyvalues(startFI + qualifierI)
           qualifiers(familyI)(qualifierI) = keyvalue.qualifier()
-          timestamps(familyI)(qualifierI) = keyvalue.timestamp()
           values(familyI)(qualifierI) = keyvalue.value()
         }
       }
 
-      puts += client put new PutRequest(name.getBytes(Charset), rowkey, families, qualifiers, values, timestamps)
+      puts += client put new PutRequest(name.getBytes(Charset), rowkey, families, qualifiers, values)
 
       // reset for next iteration
       startRI = stopRI
       familyIs.clear()
     }
     Deferred.sequence(puts.toList)
+  }
+
+  def delete(cells: Seq[Cell[R, Q, V]]): Deferred[_] = {
+    val keyvalues: Array[KeyValue] = {
+      val kvs: ArrayBuffer[KeyValue] = cells match {
+        case _: IndexedSeq[_] => new ArrayBuffer[KeyValue](cells.size) // IndexedSeq guarantees constant time .size call
+        case _ => new ArrayBuffer[KeyValue]()
+      }
+      val createKeyValue: Cell[R, Q, V] => KeyValue = Cell(encodeRowkey, encodeQualifier, encodeValue)
+      cells.foreach(cell => kvs += createKeyValue(cell))
+      kvs.toArray
+    }
+
+    // sorted by rowkey, then family, then qualifier, then value
+    ju.Arrays.sort(keyvalues.asInstanceOf[Array[AnyRef]]) // TODO: figure out why the cast is necessary
+
+    var startRI = 0 // start row index. Keeps track of the first index of the current rowkey batch
+
+    val deletes = ListBuffer[Deferred[AnyRef]]()
+
+    while (startRI < keyvalues.length) {
+      var stopRI = startRI + 1 // stop row index. Keeps track of the first index of the next rowkey batch
+
+      val rowkey = keyvalues(startRI).key() // keep track of current rowkey
+      var family = keyvalues(startRI).family() // keep track of current family
+      val familyIs = ArrayBuffer[Int](startRI) // family indices. Keeps track of the start indices for each family in the current row
+
+      // set stopRI for current row and keep track of the subsequent family start indices
+      while(stopRI < keyvalues.length && ju.Arrays.equals(rowkey, keyvalues(stopRI).key())) {
+        if (! ju.Arrays.equals(family, keyvalues(stopRI).family())) {
+          familyIs += stopRI
+          family = keyvalues(stopRI).family()
+        }
+        stopRI += 1
+      }
+
+      val numFamilies = familyIs.size
+
+      val families: Array[Array[Byte]] = Array.ofDim(numFamilies)
+      val qualifiers: Array[Array[Array[Byte]]] = Array.ofDim(numFamilies)
+      val values: Array[Array[Array[Byte]]] = Array.ofDim(numFamilies)
+
+      familyIs += stopRI // stop index for last family
+      for (familyI <- 0 until numFamilies) {
+        val startFI = familyIs(familyI)
+        val stopFI = familyIs(familyI + 1)
+        val numQualifiers = stopFI - startFI
+
+        families(familyI) = keyvalues(startFI).family()
+        qualifiers(familyI) = Array.ofDim[Array[Byte]](numQualifiers)
+        values(familyI) = Array.ofDim[Array[Byte]](numQualifiers)
+
+        for (qualifierI <- 0 until numQualifiers) {
+          val keyvalue = keyvalues(startFI + qualifierI)
+          qualifiers(familyI)(qualifierI) = keyvalue.qualifier()
+          values(familyI)(qualifierI) = keyvalue.value()
+        }
+      }
+
+      deletes += client put new PutRequest(name.getBytes(Charset), rowkey, families, qualifiers, values)
+
+      // reset for next iteration
+      startRI = stopRI
+      familyIs.clear()
+    }
+    Deferred.sequence(deletes.toList)
   }
 
   // TODO: rip out this abomination

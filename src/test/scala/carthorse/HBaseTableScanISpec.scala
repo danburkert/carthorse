@@ -26,8 +26,7 @@ class HBaseTableScanISpec
   val cells: Set[Cell[Byte, Byte, String]] =
     (Byte.MinValue to Byte.MaxValue).map { b =>
       val byte = b.toByte
-      val version = if (byte >= 0) byte else byte + 256
-      Cell(byte, Family, byte, version, byte.toString)
+      Cell(byte, Family, byte, byte.toString)
     }.toSet
 
   override protected def beforeAll(): Unit = {
@@ -54,8 +53,7 @@ class HBaseTableScanISpec
             OrderedByteable.toBytesAsc(cell.rowkey),
             familyBytes,
             OrderedByteable.toBytesAsc(cell.qualifier),
-            Byteable.toBytes(cell.value),
-            cell.version))
+            Byteable.toBytes(cell.value)))
     }
     client.flush().join()
   }
@@ -129,103 +127,12 @@ class HBaseTableScanISpec
     }
   }
 
-  property("HBaseTable can scan all Cells in a table restricted to a version.") {
-    forAll { version: Long =>
-      whenever(version >= 0) {
-        val result = table.viewVersion(version).scan().toSet
-        val expected = cells.filter(cell => cell.version == version)
-        result should equal (expected)
-      }
-    }
-  }
-
-  property("HBaseTable can scan all Cells in a table restricted to versions.") {
-    forAll { longs: List[Long] =>
-      val versions = longs.toSet
-      val result = table.viewVersions(longs:_*).scan().toSet
-      val expected = cells.filter(cell => versions(cell.version))
-      result should equal (expected)
-    }
-  }
-
-  property("HBaseTable can scan all Cells in a table restricted to a version interval.") {
-    forAll { versions: Interval[Long] =>
-      val result = table.viewVersions(versions).scan().toSet
-      val expected = cells.filter(cell => versions(cell.version))
-      result should equal (expected)
-    }
-  }
-
   property("An HBaseTable view can be restricted by a rows interval set and a columns interval set.") {
     forAll { (rows: IntervalSet[Byte], qualifiers: IntervalSet[Byte]) =>
       val result = table.viewRows(rows).viewColumns(Family, qualifiers).scan().toSet
       val expected = cells.filter(cell =>
         rows.containsPoint(cell.rowkey) &&
           qualifiers.containsPoint(cell.qualifier))
-      result should equal (expected)
-    }
-  }
-
-  property("An HBaseTable view can be restricted by a rows interval set and a versions interval.") {
-    forAll { (rows: IntervalSet[Byte], versions: Interval[Long]) =>
-      val result = table.viewRows(rows).viewVersions(versions).scan().toSet
-      val expected = cells.filter(cell => rows.containsPoint(cell.rowkey) && versions(cell.version))
-      result should equal (expected)
-    }
-  }
-
-  property("An HBaseTable view can be restricted by a rows interval set and versions.") {
-    forAll { (rows: IntervalSet[Byte], versions: Set[Long]) =>
-      val result = table.viewRows(rows).viewVersions(versions.toSeq:_*).scan().toSet
-      val expected = cells.filter { cell =>
-        rows.containsPoint(cell.rowkey) &&
-        versions(cell.version)
-      }
-      result should equal (expected)
-    }
-  }
-
-  property("An HBaseTable view can be restricted by a qualifier interval set and a versions interval.") {
-    forAll { (qualifiers: IntervalSet[Byte], versions: Interval[Long]) =>
-      val result = table.viewColumns(Family, qualifiers).viewVersions(versions).scan().toSet
-      val expected = cells.filter { cell =>
-        qualifiers.containsPoint(cell.qualifier) &&
-        versions(cell.version)
-      }
-      result should equal (expected)
-    }
-  }
-
-  property("An HBaseTable view can be restricted by a qualifier interval set and versions.") {
-    forAll { (qualifiers: IntervalSet[Byte], versions: Set[Long]) =>
-      val result = table.viewColumns(Family, qualifiers).viewVersions(versions.toSeq:_*).scan().toSet
-      val expected = cells.filter { cell =>
-        qualifiers.containsPoint(cell.qualifier) &&
-          versions(cell.version)
-      }
-      result should equal (expected)
-    }
-  }
-
-  property("An HBaseTable view can be restricted by rowkey, qualifier, and version interval.") {
-    forAll { (rows: IntervalSet[Byte], qualifiers: IntervalSet[Byte], versions: Interval[Long]) =>
-      val result = table.viewRows(rows).viewColumns(Family, qualifiers).viewVersions(versions).scan().toSet
-      val expected = cells.filter { cell =>
-        rows.containsPoint(cell.rowkey) &&
-        qualifiers.containsPoint(cell.qualifier) &&
-        versions(cell.version)
-      }
-      result should equal (expected)
-    }
-  }
-
-  property("An HBaseTable view can be restricted by rowkey, qualifier, and versions.") {
-    forAll { (rows: IntervalSet[Byte], qualifiers: IntervalSet[Byte], versions: Set[Long]) =>
-      val result = table.viewRows(rows).viewColumns(Family, qualifiers).viewVersions(versions.toSeq:_*).scan().toSet
-      val expected = cells.filter(cell =>
-        rows.containsPoint(cell.rowkey) &&
-          qualifiers.containsPoint(cell.qualifier) &&
-          versions(cell.version))
       result should equal (expected)
     }
   }

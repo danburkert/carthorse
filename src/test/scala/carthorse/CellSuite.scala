@@ -13,10 +13,10 @@ class CellSuite extends FunSuite {
   def a3: Array[Byte] = Array(2).map(_.toByte)
 
 
-  def c0 = Cell(a0, Family, a0, 0, a0)
-  def c1 = Cell(a0, Family, a0, 0, a0)
-  def c2 = Cell(a1, Family, a0, 0, a0)
-  def c3 = Cell(a1, Family, a0, 0, a0)
+  def c0 = Cell(a0, Family, a0, a0)
+  def c1 = Cell(a0, Family, a0, a0)
+  def c2 = Cell(a1, Family, a0, a0)
+  def c3 = Cell(a1, Family, a0, a0)
 
 
   test("Cell.equals correctly checks equality on byte arrays.") {

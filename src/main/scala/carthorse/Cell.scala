@@ -8,7 +8,6 @@ final case class Cell[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
     rowkey: R,
     family: String,
     qualifier: Q,
-    version: Long,
     value: V)
   extends Ordered[Cell[R, Q, V]] {
 
@@ -17,7 +16,6 @@ final case class Cell[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
       (this eq other) || (Cell.equals(rowkey, other.rowkey)
           && family == other.family
           && Cell.equals(qualifier, other.qualifier)
-          && version == other.version
           && Cell.equals(value, other.value))
     case _ => false
   }
@@ -26,11 +24,9 @@ final case class Cell[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
     41 * (
       41 * (
         41 * (
-          41 * (
-            41 + Cell.hashCode(rowkey)
-          ) + family.hashCode
-        ) + Cell.hashCode(qualifier)
-      ) + version.hashCode
+          41 + Cell.hashCode(rowkey)
+        ) + family.hashCode
+      ) + Cell.hashCode(qualifier)
     ) + Cell.hashCode(value)
 
   override def compare(other: Cell[R, Q, V]): Int = {
@@ -40,8 +36,6 @@ final case class Cell[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
     if (family != 0) return family
     val qualifier = this.qualifier.compare(other.qualifier)
     if (qualifier != 0) return qualifier
-    val version = this.version compare other.version
-    if (version != 0) return version
     implicitly[Ordering[V]].compare(this.value, other.value)
   }
 }
@@ -67,19 +61,13 @@ object Cell {
   }
 
   /**
-   * Create a Cell[R, Q, V] with the latest timestamp.
-   */
-  def apply[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](rowkey: R, family: String, qualifier: Q, value: V): Cell[R, Q, V] =
-    Cell(rowkey, family, qualifier, KeyValue.TIMESTAMP_NOW, value)
-
-  /**
    * Create a Cell[R, Q, V] from a KeyValue.
    */
   def apply[R <% Ordered[R], Q <% Ordered[Q], V : Ordering]
   (decodeRowkey: Array[Byte] => R, decodeQualifier: Array[Byte] => Q, decodeValue: Array[Byte] => V)
   (kv: KeyValue): Cell[R, Q, V] = {
     // TODO: share family String instances
-    new Cell(decodeRowkey(kv.key), new String(kv.family, Charset), decodeQualifier(kv.qualifier), kv.timestamp, decodeValue(kv.value))
+    new Cell(decodeRowkey(kv.key), new String(kv.family, Charset), decodeQualifier(kv.qualifier), decodeValue(kv.value))
   }
 
   /**
@@ -93,6 +81,5 @@ object Cell {
       encodeRowKey(cell.rowkey),
       cell.family.getBytes(Charset),
       encodeQualifier(cell.qualifier),
-      cell.version,
       encodeValue(cell.value))
 }
