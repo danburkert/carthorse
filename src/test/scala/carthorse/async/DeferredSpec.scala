@@ -113,7 +113,10 @@ class DeferredSpec extends WordSpec with Matchers {
       "pass its exception in a Failure to an onComplete callback" in {
         var res: Try[Int] = null
         deferred.onComplete(t => res = t)
-        res match { case Failure(ex: RuntimeException) => ex.getMessage should equal (e.getMessage)}
+        res match {
+          case Failure(ex: RuntimeException) => ex.getMessage should equal (e.getMessage)
+          case _ => throw new AssertionError("This should not happen")
+        }
       }
       "pass its exception to an onFailure callback" in {
         var res: Exception = null

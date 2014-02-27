@@ -233,9 +233,7 @@ case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
   def scan(): ScanIterator[R, Q, V] =
     createScanner().map(ScanIterator(_, decodeRowkey, decodeQualifier, decodeValue)).getOrElse(ScanIterator())
 
-  def put(cells: Cell[R, Q, V]*): Unit = put(cells)
-
-  def put(cells: Seq[Cell[R, Q, V]]): Deferred[_] = {
+  def put(cells: Cell[R, Q, V]*): Deferred[_] = {
     val keyvalues: Array[KeyValue] = {
       val kvs: ArrayBuffer[KeyValue] = cells match {
         case _: IndexedSeq[_] => new ArrayBuffer[KeyValue](cells.size) // IndexedSeq guarantees constant time .size call
@@ -301,77 +299,55 @@ case class HBaseTable[R <% Ordered[R], Q <% Ordered[Q], V : Ordering](
     Deferred.sequence(puts.toList)
   }
 
-  def delete(cells: Seq[Cell[R, Q, V]]): Deferred[_] = {
-    val keyvalues: Array[KeyValue] = {
-      val kvs: ArrayBuffer[KeyValue] = cells match {
-        case _: IndexedSeq[_] => new ArrayBuffer[KeyValue](cells.size) // IndexedSeq guarantees constant time .size call
-        case _ => new ArrayBuffer[KeyValue]()
+  /**
+   * Deletes the cell at the provided coordinates.
+   */
+  def deleteCells(coordinates: (R, String, Q)*): Deferred[_] = {
+    val tableName = name.getBytes(Charset)
+    Deferred.sequence(
+      coordinates
+        .groupBy(_._1)
+        .toSeq
+        .map { (i: (R, Seq[(R, String, Q)])) =>
+        val rowkey = encodeRowkey(i._1)
+        val columns: Seq[(Array[Byte], Array[Array[Byte]])] =
+          i._2
+            .groupBy(_._2)
+            .toSeq
+            .map { (j: (String, Seq[(R, String, Q)])) =>
+            j._1.getBytes(Charset) -> j._2.map(t => encodeQualifier(t._3)).toArray
+          }
+        val (families, qualifiers) = columns.unzip
+        client delete new DeleteRequest(tableName, rowkey, families.toArray, qualifiers.toArray): Deferred[AnyRef]
       }
-      val createKeyValue: Cell[R, Q, V] => KeyValue = Cell(encodeRowkey, encodeQualifier, encodeValue)
-      cells.foreach(cell => kvs += createKeyValue(cell))
-      kvs.toArray
-    }
-
-    // sorted by rowkey, then family, then qualifier, then value
-    ju.Arrays.sort(keyvalues.asInstanceOf[Array[AnyRef]]) // TODO: figure out why the cast is necessary
-
-    var startRI = 0 // start row index. Keeps track of the first index of the current rowkey batch
-
-    val deletes = ListBuffer[Deferred[AnyRef]]()
-
-    while (startRI < keyvalues.length) {
-      var stopRI = startRI + 1 // stop row index. Keeps track of the first index of the next rowkey batch
-
-      val rowkey = keyvalues(startRI).key() // keep track of current rowkey
-      var family = keyvalues(startRI).family() // keep track of current family
-      val familyIs = ArrayBuffer[Int](startRI) // family indices. Keeps track of the start indices for each family in the current row
-
-      // set stopRI for current row and keep track of the subsequent family start indices
-      while(stopRI < keyvalues.length && ju.Arrays.equals(rowkey, keyvalues(stopRI).key())) {
-        if (! ju.Arrays.equals(family, keyvalues(stopRI).family())) {
-          familyIs += stopRI
-          family = keyvalues(stopRI).family()
-        }
-        stopRI += 1
-      }
-
-      val numFamilies = familyIs.size
-
-      val families: Array[Array[Byte]] = Array.ofDim(numFamilies)
-      val qualifiers: Array[Array[Array[Byte]]] = Array.ofDim(numFamilies)
-      val values: Array[Array[Array[Byte]]] = Array.ofDim(numFamilies)
-
-      familyIs += stopRI // stop index for last family
-      for (familyI <- 0 until numFamilies) {
-        val startFI = familyIs(familyI)
-        val stopFI = familyIs(familyI + 1)
-        val numQualifiers = stopFI - startFI
-
-        families(familyI) = keyvalues(startFI).family()
-        qualifiers(familyI) = Array.ofDim[Array[Byte]](numQualifiers)
-        values(familyI) = Array.ofDim[Array[Byte]](numQualifiers)
-
-        for (qualifierI <- 0 until numQualifiers) {
-          val keyvalue = keyvalues(startFI + qualifierI)
-          qualifiers(familyI)(qualifierI) = keyvalue.qualifier()
-          values(familyI)(qualifierI) = keyvalue.value()
-        }
-      }
-
-      deletes += client put new PutRequest(name.getBytes(Charset), rowkey, families, qualifiers, values)
-
-      // reset for next iteration
-      startRI = stopRI
-      familyIs.clear()
-    }
-    Deferred.sequence(deletes.toList)
+    )
   }
 
-  // TODO: rip out this abomination
-  def deleteRows(rows: R*): Deferred[_] = {
-    val n = name.getBytes(Charset)
-    val deletes = rows.map(row => su2ch(client.delete(new DeleteRequest(n, encodeRowkey(row)))))
-    Deferred.sequence(deletes)
+  /**
+   * Deletes the cells in the family at the provided coordinates.
+   */
+  def deleteFamilies(coordinates: (R, String)*): Deferred[_] = {
+    val tableName: Array[Byte] = name.getBytes(Charset)
+    Deferred.sequence(
+      coordinates
+        .groupBy(_._1)
+        .toSeq
+        .map { (i: (R, Seq[(R, String)])) =>
+          val rowkey: Array[Byte] = encodeRowkey(i._1)
+          val families: Array[Array[Byte]] = i._2.unzip._2.toSet.map((family: String) => family.getBytes(Charset)).toArray
+          client delete new DeleteRequest(tableName, rowkey, families): Deferred[AnyRef]
+      }
+    )
+  }
+
+  /**
+   * Deletes the cells in the rows at the provided coordinates.
+   */
+  def deleteRows(rowkeys: R*): Deferred[_] = {
+    val tableName = name.getBytes(Charset)
+    Deferred.sequence(
+      rowkeys.distinct.toSeq.map(rowkey => client delete new DeleteRequest(tableName, encodeRowkey(rowkey)): Deferred[AnyRef])
+    )
   }
 
   def flush(): Deferred[_] = client.flush()

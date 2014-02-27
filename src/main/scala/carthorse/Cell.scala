@@ -82,4 +82,7 @@ object Cell {
       cell.family.getBytes(Charset),
       encodeQualifier(cell.qualifier),
       encodeValue(cell.value))
+
+  def coordinates[R, Q, V](cell: Cell[R, Q, V]): (R, String, Q) =
+    (cell.rowkey, cell.family, cell.qualifier)
 }
